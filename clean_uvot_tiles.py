@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
 parser.add_argument('-nd', '--no_detect', action='store_true', help='Skips uvotdetect command for each tile.')
 parser.add_argument('-rb', '--remove_bad', action='store_true', help='Removes bad aspect correction tiles instead of correcting them.')
+parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
 
 args = parser.parse_args()
 
@@ -111,8 +112,11 @@ while run_pipeline == True:
                 full_exppath = os.path.join(subpath, exppath_fill)
                 
                 uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath)
-        
-                up.run_uvotdetect(uvotdetect_command)
+                
+                if "-v" == True:
+                    up.run_uvotdetect_verbose(uvotdetect_command)
+                else:
+                    up.run_uvotdetect(uvotdetect_command)
         
             print("uvotdetect is complete.\n")
     

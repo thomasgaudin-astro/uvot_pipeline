@@ -249,6 +249,38 @@ def check_aspect_correction(filepath):
 
     return aspect_uncorrected
 
+def check_aspect_correction_verbose(filepath):
+
+    aspect_uncorrected = []
+
+    for path in sorted(os.listdir(filepath)):
+        if path == '.DS_Store':
+            continue
+        else:
+            subpath = os.path.join(filepath, path)
+
+            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
+            full_sourcepath = os.path.join(subpath, sourcepath_fill)
+            
+            exists = os.path.exists(full_sourcepath)
+            
+            if exists == True:
+                fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
+
+                aspcorr_output = run_fkeyprint_verbose(fkeyprint_command)
+
+                if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
+                    continue
+                elif re.search("ASPCORR = 'UNICORR '", aspcorr_output):
+                    continue
+                else:
+                    aspect_uncorrected.append(path)
+                
+            elif exists == False:
+                continue
+
+    return aspect_uncorrected
+
 def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tiles):
 
     for auct in aspect_uncorrected_tiles:
