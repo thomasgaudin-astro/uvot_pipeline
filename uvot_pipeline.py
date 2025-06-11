@@ -160,8 +160,8 @@ def run_uvotunicorr_verbose(uvotunicorr_command):
 
 def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
 
-    trunc_obs_filepath = f'./{tile_name}/UVOT/{obsid}/uvot/image/'
-    obs_filepath = f'./{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img.gz'
+    trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
+    obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img.gz'
     
     bash_command = f"""
         bash -c '
