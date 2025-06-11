@@ -91,4 +91,24 @@ while use_tile = False:
     elif uf.upper == "Y":
         use_tile = True
     elif uf.upper == "N":
-        closest_tile = input(f'')
+        closest_tile = input(f'Which tile do you wish to use instead? ')
+        
+        # Check to make sure new tile is real.
+        while valid_tile == False:
+            filepath = f'./S-CUBED'
+        
+            all_filepaths = sorted(os.listdir(filepath))
+            if '.DS_Store' in all_filepaths:
+                all_filepaths.remove('.DS_Store')
+
+            if closest_tile in all_filepaths:
+                valid_tile = True
+            else:
+                print("Tile not found. Please input a valid title.")
+            
+        use_tile = True
+    else:
+        print("Please pick a valid option [Y/N]")
+
+
+            
