@@ -130,7 +130,7 @@ while use_tile == False:
 print("\nStarting aperture photometry.")
 
 # Define filepath for individual UVOT observations
-tile_filepath = f"./{closest_tile}/UVOT"
+tile_filepath = f"./S-CUBED/{closest_tile}/UVOT"
 
 # Generate a list of observation ids. Remove ".DS_Store" if in list
 all_target_filepaths = sorted(os.listdir(tile_filepath))
@@ -156,7 +156,7 @@ print("Grabbing Data for Output.")
 # Loop through all filepaths and grab fits data from photometry source.fits output
 for obs in all_target_filepaths:
 
-    filename = f'./{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
 
     # Open fits file and grab data from it. Turn it into an array
     with fits.open(filename) as hdul:
@@ -213,7 +213,7 @@ print("\nDeleting unnecessary files.")
 
 for obs in all_target_filepaths:
 
-    filename = f'./{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
 
     if os.path.exists(filename) == True:
         os.remove(filename)
