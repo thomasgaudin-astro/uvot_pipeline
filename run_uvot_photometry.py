@@ -10,6 +10,8 @@ import argparse
 
 import os
 
+import sys
+
 import pandas as pd
 
 import uvot_pipeline as up
@@ -58,7 +60,7 @@ while files_exist == False:
         print("Source Region and Background Region exist.")
         files_exist = True
     else:
-        print("ERROR: Source or Background Region not found.")
+        sys.exit("ERROR: Source or Background Region not found.")
     
 print("Checking which S-CUBED Tile is closest to your photometry target.")
 
