@@ -158,22 +158,23 @@ for obs in all_target_filepaths:
 
     filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
 
-    # Open fits file and grab data from it. Turn it into an array
-    with fits.open(filename) as hdul:
-        head = hdul[0].header
-        data = hdul[1].data
+    if os.path.exists(filename) == True:
+        # Open fits file and grab data from it. Turn it into an array
+        with fits.open(filename) as hdul:
+            head = hdul[0].header
+            data = hdul[1].data
 
-        data_array = np.array(data[0])
+            data_array = np.array(data[0])
 
-    # Re-shape data array into DataFrame
-    data_array = pd.DataFrame(data_array.reshape(1, 126), columns=data.names)
-    
-    # If this is first observation, create source_data DataFrame from data_array DataFrame. 
-    # If this is not the first observation, tack the data_array values onto the end of the source_data DataFrame
-    if source_data.empty == False:
-        source_data = pd.concat([source_data, data_array])
-    else:
-        source_data = data_array
+        # Re-shape data array into DataFrame
+        data_array = pd.DataFrame(data_array.reshape(1, 126), columns=data.names)
+        
+        # If this is first observation, create source_data DataFrame from data_array DataFrame. 
+        # If this is not the first observation, tack the data_array values onto the end of the source_data DataFrame
+        if source_data.empty == False:
+            source_data = pd.concat([source_data, data_array])
+        else:
+            source_data = data_array
 
 # Sort DataFrame by Time    
 source_data = source_data.sort_values('MET', ascending=True)
