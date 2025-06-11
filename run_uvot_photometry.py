@@ -6,10 +6,16 @@ Created on Wed Jun  2 12:08:00 2025
 @author: tmg6006
 """
 
-import argparses
+import argparse
+
 import os
+
 import pandas as pd
+
 import uvot_pipeline as up
+
+from swifttools.swift_too import Clock
+
 
 # Set all required environment variables
 os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
@@ -50,6 +56,9 @@ while files_exist == False:
 
     if (os.path.exists(args.source_reg) == True) & (os.path.exists(args.bkg_reg) == True):
         print("Source Region and Background Region exist.")
+        files_exist = True
+    else:
+        print("ERROR: Source or Background Region not found.")
     
 print("Checking which S-CUBED Tile is closest to your photometry target.")
 
@@ -87,6 +96,7 @@ while use_tile = False:
     uf = input(f'Do you wish to use {closest_tile}? [Y]')
 
     if uf == "":
+        print(f"Using {closest_tile}")
         use_tile = True
     elif uf.upper == "Y":
         use_tile = True
@@ -102,6 +112,7 @@ while use_tile = False:
                 all_filepaths.remove('.DS_Store')
 
             if closest_tile in all_filepaths:
+                print(f"Using {closest_tile}")
                 valid_tile = True
             else:
                 print("Tile not found. Please input a valid title.")
@@ -110,5 +121,93 @@ while use_tile = False:
     else:
         print("Please pick a valid option [Y/N]")
 
+print("\nStarting aperture photometry.")
 
-            
+# Define filepath for individual UVOT observations
+tile_filepath = f"./{closest_tile}/UVOT"
+
+# Generate a list of observation ids. Remove ".DS_Store" if in list
+all_target_filepaths = sorted(os.listdir(tile_filepath))
+    
+if '.DS_Store' in all_target_filepaths:
+    all_target_filepaths.remove('.DS_Store')
+
+# Loop through filepaths and run uvotsource
+for obs in all_target_filepaths:
+
+    # Write command for uvotsource
+    uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.target_name)
+    
+    if "-v" == True:
+        up.run_uvotsource_verbose(uvotsource_command)
+    else:
+        up.run_uvotsource(uvotsource_command)
+
+print("Aperture photometry complete.\n")
+
+print("Grabbing Data for Output.")
+
+# Loop through all filepaths and grab fits data from photometry source.fits output
+for obs in all_target_filepaths:
+
+    filename = f'./{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+
+    # Open fits file and grab data from it. Turn it into an array
+    with fits.open(filename) as hdul:
+        head = hdul[0].header
+        data = hdul[1].data
+
+        data_array = np.array(data[0])
+
+    # Re-shape data array into DataFrame
+    data_array = pd.DataFrame(data_array.reshape(1, 126), columns=data.names)
+    
+    # If this is first observation, create source_data DataFrame from data_array DataFrame. 
+    # If this is not the first observation, tack the data_array values onto the end of the source_data DataFrame
+    if source_data.empty == False:
+        source_data = pd.concat([source_data, data_array])
+    else:
+        source_data = data_array
+
+# Sort DataFrame by Time    
+source_data = source_data.sort_values('MET', ascending=True)
+source_data = source_data.reset_index(drop=True)
+
+# Make sure important values are floats
+source_data['AB_MAG'] = source_data['AB_MAG'].astype(float)
+source_data['AB_MAG_ERR'] = source_data['AB_MAG_ERR'].astype(float)
+source_data['MAG'] = source_data['MAG'].astype(float)
+source_data['MAG_ERR'] = source_data['MAG_ERR'].astype(float)
+source_data['MET'] = source_data['MET'].astype(float)
+source_data['EXPOSURE'] = source_data['EXPOSURE'].astype(float)
+
+# Convert MET values into MJD values
+cc = Clock()
+
+cc.met = list(source_data['MET'])
+cc.submit()
+times = Time(cc.utc, scale='utc').mjd
+
+source_data['MJD'] = times
+
+#copy just the values that we want to a sliced DataFrame
+uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
+
+outpath = f'./UVOT_Outputs/{args.target_name}_uvot_data.txt'
+
+#export DataFrame to text file
+with open(outpath, 'w') as f:
+    df_string = uvot_data_slice.to_string(header=False, index=False)
+    f.write(df_string)
+    
+print('Task Complete.')
+print(f'Outputting new file: {args.target_name}_uvot_data.txt')
+
+print("\nDeleting unnecessary files.")
+
+for obs in all_target_filepaths:
+
+    filename = f'./{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+
+    if os.path.exists(filename) == True:
+        os.remove(filename)
