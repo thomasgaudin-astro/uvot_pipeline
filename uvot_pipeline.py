@@ -51,6 +51,20 @@ def run_uvotdetect(uvotdetect_command):
     # print("STDERR:\n", result.stderr)
 
     return result.stdout
+
+def run_uvotdetect_verbose(uvotdetect_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
+
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
     
 def create_fkeyprint_bash_command(source_path):
 
