@@ -112,7 +112,7 @@ while run_pipeline == True:
                 full_exppath = os.path.join(subpath, exppath_fill)
                 
                 uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath)
-                
+
                 if "-v" == True:
                     up.run_uvotdetect_verbose(uvotdetect_command)
                 else:
@@ -133,10 +133,11 @@ while run_pipeline == True:
     
         print("Checking Frame Aspect Correction.")
         print("Identifying Frames with No Aspect Correction.")
-        
-        print(all_filepaths)
-    
-        aspect_uncorrected_frames = up.check_aspect_correction(filepath)
+
+        if "-v" == True:
+            aspect_uncorrected_frames = up.check_aspect_correction_verbose(filepath)
+        else:
+            aspect_uncorrected_frames = up.check_aspect_correction(filepath)
         num_uncorrected = len(aspect_uncorrected_frames)
         
         new_all_filepaths = sorted(os.listdir(filepath))
@@ -215,7 +216,10 @@ while run_pipeline == True:
                     unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
                     
                     #run uvotunicorr
-                    up.run_uvotunicorr(unicorr_command)
+                    if "-v" == True:
+                        up.run_uvotunicorr_verbose(unicorr_command)
+                    else:
+                        up.run_uvotunicorr(unicorr_command)
                     
                 print("Corrections Complete. Checking how many were successful.\n")
                 
