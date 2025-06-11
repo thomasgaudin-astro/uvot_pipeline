@@ -183,7 +183,7 @@ def run_uvotsource(uvotsource_command):
     )
 
     # print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
+    # print("STDERR:\n", result.stderr)
 
     return result.stdout
 
