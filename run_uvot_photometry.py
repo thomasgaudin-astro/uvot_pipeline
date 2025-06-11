@@ -17,6 +17,7 @@ from astropy.coordinates import SkyCoord
 import sys
 
 import pandas as pd
+import numpy as np
 
 import uvot_pipeline as up
 
