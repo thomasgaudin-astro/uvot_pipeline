@@ -10,6 +10,10 @@ import argparse
 
 import os
 
+from astropy.io import fits
+import astropy.units as u
+from astropy.coordinates import SkyCoord
+
 import sys
 
 import pandas as pd
