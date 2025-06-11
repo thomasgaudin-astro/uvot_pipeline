@@ -158,6 +158,49 @@ def run_uvotunicorr_verbose(uvotunicorr_command):
 
     return result.stdout
 
+def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
+
+    trunc_obs_filepath = f'./{tile_name}/UVOT/{obsid}/uvot/image/'
+    obs_filepath = f'./{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img.gz'
+    
+    bash_command = f"""
+        bash -c '
+        source {os.environ['HEADAS']}/headas-init.sh
+        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath + target_name}_source.fits" cleanup=YES clobber=YES chatter=1
+
+        '
+        """
+
+    return bash_command
+
+def run_uvotsource(uvotsource_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotsource_command],
+        capture_output=True,
+        text=True
+    )
+
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
+def run_uvotsource_verbose(uvotsource_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotsource_command],
+        capture_output=True,
+        text=True
+    )
+
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
 def detect_smeared_frames(tile_name):
 
     filepath = f'./S-CUBED/{tile_name}/UVOT'
