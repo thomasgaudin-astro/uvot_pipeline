@@ -153,6 +153,9 @@ print("Aperture photometry complete.\n")
 
 print("Grabbing Data for Output.")
 
+# Generate blank data used for general data storage
+source_data = pd.DataFrame()
+
 # Loop through all filepaths and grab fits data from photometry source.fits output
 for obs in all_target_filepaths:
 
