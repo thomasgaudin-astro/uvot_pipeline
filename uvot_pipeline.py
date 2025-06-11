@@ -81,6 +81,19 @@ def run_fkeyprint(fkeyprint_command):
 
     return result.stdout
 
+def run_fkeyprint_verbose(fkeyprint_command):
+
+    result = subprocess.run(
+        ['bash', '-i', '-c', fkeyprint_command],
+        capture_output=True,
+        text=True
+    )
+    
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
 def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     if obspath:
