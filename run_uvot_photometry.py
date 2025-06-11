@@ -142,7 +142,7 @@ if '.DS_Store' in all_target_filepaths:
 for obs in all_target_filepaths:
 
     # Write command for uvotsource
-    uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.target_name)
+    uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
     
     if "-v" == True:
         up.run_uvotsource_verbose(uvotsource_command)
@@ -156,7 +156,7 @@ print("Grabbing Data for Output.")
 # Loop through all filepaths and grab fits data from photometry source.fits output
 for obs in all_target_filepaths:
 
-    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
 
     # Open fits file and grab data from it. Turn it into an array
     with fits.open(filename) as hdul:
@@ -199,7 +199,7 @@ source_data['MJD'] = times
 #copy just the values that we want to a sliced DataFrame
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
 
-outpath = f'./UVOT_Outputs/{args.target_name}_uvot_data.txt'
+outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
 #export DataFrame to text file
 with open(outpath, 'w') as f:
@@ -207,13 +207,13 @@ with open(outpath, 'w') as f:
     f.write(df_string)
     
 print('Task Complete.')
-print(f'Outputting new file: {args.target_name}_uvot_data.txt')
+print(f'Outputting new file: {args.source_name}_uvot_data.txt')
 
 print("\nDeleting unnecessary files.")
 
 for obs in all_target_filepaths:
 
-    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.target_name}_source.fits'
+    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
 
     if os.path.exists(filename) == True:
         os.remove(filename)
