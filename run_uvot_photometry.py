@@ -211,3 +211,8 @@ for obs in all_target_filepaths:
 
     if os.path.exists(filename) == True:
         os.remove(filename)
+
+print("All source.fits files deleted.")
+
+print("\nUVOT Photometry has been generated.")
+print("\nExiting Photometry Pipeline.")
