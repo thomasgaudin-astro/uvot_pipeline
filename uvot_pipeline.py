@@ -106,7 +106,16 @@ def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 def run_uvotunicorr(uvotunicorr_command):
 
     # Run the command
-    os.system(uvotunicorr_command)
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotunicorr_command],
+        capture_output=True,
+        text=True
+    )
+
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
 
 def detect_smeared_frames(tile_name):
 
