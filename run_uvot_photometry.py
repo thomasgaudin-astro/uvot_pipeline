@@ -93,7 +93,7 @@ use_tile = False
 valid_tile = False
 
 # Check to see if this tile is 
-while use_tile = False:
+while use_tile == False:
 
     uf = input(f'Do you wish to use {closest_tile}? [Y]')
 
