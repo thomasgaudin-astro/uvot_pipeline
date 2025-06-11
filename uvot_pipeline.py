@@ -144,6 +144,20 @@ def run_uvotunicorr(uvotunicorr_command):
 
     return result.stdout
 
+def run_uvotunicorr_verbose(uvotunicorr_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotunicorr_command],
+        capture_output=True,
+        text=True
+    )
+
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
 def detect_smeared_frames(tile_name):
 
     filepath = f'./S-CUBED/{tile_name}/UVOT'
