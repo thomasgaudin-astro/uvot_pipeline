@@ -41,7 +41,16 @@ def create_uvotdetect_bash_command(source_path, output_path, exposure_path):
 def run_uvotdetect(uvotdetect_command):
 
     # Run the command
-    os.system(uvotdetect_command)
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
+
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
     
 def create_fkeyprint_bash_command(source_path):
 
