@@ -185,6 +185,7 @@ while run_pipeline == True:
                         sourcepath_fill = 'uvot/image/detect.fits'
                         full_sourcepath = os.path.join(subpath, sourcepath_fill)
                 
+                print(f'The Reference Frame is {ref_frame}')
                 #generate path to the reference frame detect.fits
                 ref_detect_path = f'{filepath}/{ref_frame}/uvot/image/detect.fits'
                 #generate path to reference image
