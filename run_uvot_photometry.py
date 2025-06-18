@@ -202,6 +202,9 @@ times = Time(cc.utc, scale='utc').mjd
 
 source_data['MJD'] = times
 
+#remove any sources with magnitude of 99
+source_data = source_data[source_data['MAG'] > 99]
+
 #copy just the values that we want to a sliced DataFrame
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
 
