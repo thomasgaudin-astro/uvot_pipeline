@@ -62,6 +62,7 @@ while run_pipeline == True:
                 try:
                     int(side_buffer)
                     sb_needed = False
+                    side_buffer = int(side_buffer)
                 except:
                     print("Please pick a valid integer.")
                     
