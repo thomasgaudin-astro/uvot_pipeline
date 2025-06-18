@@ -41,7 +41,7 @@ print('Starting the S-CUBED UVOT Cleaning Pipeline.\n')
 run_pipeline = True
 
 while run_pipeline == True:
-    if args.remove_bad == True:
+    if "-rb" == True:
         print('Frames with no aspect correction will be removed.')
     
     else:
@@ -94,7 +94,7 @@ while run_pipeline == True:
         if '.DS_Store' in all_filepaths:
             all_filepaths.remove('.DS_Store')
         
-        if args.no_detect == True:
+        if '-nd' == True:
             continue
         else:
     
@@ -150,7 +150,7 @@ while run_pipeline == True:
             continue
         
         else:
-            if args.remove_bad == True:
+            if '-rb' == True:
                 print("Removing Bad Frames.")
                 
                 out_filepath = filepath+'/AspectNone'
@@ -246,7 +246,7 @@ while run_pipeline == True:
         print("Aspect Correction Check is complete.\n")
         
     print('First Pass finished.')
-    if args.remove_bad == True:
+    if '-rb' == True:
         print('No more actions needed.')
         print('Exiting Cleaning Pipeline')
         
