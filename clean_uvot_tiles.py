@@ -76,6 +76,7 @@ while run_pipeline == True:
                 try:
                     int(num_stars)
                     ns_needed = False
+                    num_stars = int(num_stars)
                 except:
                     print("Please pick a valid integer.")
             
