@@ -53,7 +53,7 @@ while run_pipeline == True:
             
         while sb_needed == True:
             
-            side_buffer = input("Please select the distance from the side of the frame that you wish to exclude: [5]")
+            side_buffer = input("Please select the distance from the center of the frame that you wish to include: [5]")
             
             if side_buffer == "":
                 side_buffer = 5
