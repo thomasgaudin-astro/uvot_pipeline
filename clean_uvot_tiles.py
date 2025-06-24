@@ -86,7 +86,7 @@ while run_pipeline == True:
             
     #run full cleaning pipeline for each S-CUBED tile.
     # for sc_tile in tiles['Tile Name']:
-    for sc_tile in ['SMC_J0110.1-7236']:
+    for sc_tile in ['SMC_J0050.5-7238']:
     
         print(f"Cleaning Data for Tile {sc_tile}.")
         
