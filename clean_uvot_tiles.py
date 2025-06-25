@@ -41,7 +41,7 @@ print('Starting the S-CUBED UVOT Cleaning Pipeline.\n')
 run_pipeline = True
 
 while run_pipeline == True:
-    if args.verbose:
+    if args.remove_bad:
         print('Frames with no aspect correction will be removed.')
     
     else:
