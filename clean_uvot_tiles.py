@@ -53,10 +53,10 @@ while run_pipeline == True:
             
         while sb_needed == True:
             
-            side_buffer = input("Please select the distance from the center of the frame that you wish to include: [5]")
+            side_buffer = input("Please select the distance from the center of the frame that you wish to include: [9]")
             
             if side_buffer == "":
-                side_buffer = 5
+                side_buffer = 9
                 sb_needed = False
             else:
                 try:
@@ -68,10 +68,10 @@ while run_pipeline == True:
                     
         while ns_needed == True:
             
-            num_stars = input("Please choose how many stars you wish to select for use in aspect correction: [15]")
+            num_stars = input("Please choose how many stars you wish to select for use in aspect correction: [20]")
             
             if num_stars == "":
-                num_stars = 15
+                num_stars = 20
                 ns_needed = False
             else:
                 try:
