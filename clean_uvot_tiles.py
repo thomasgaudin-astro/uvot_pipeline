@@ -116,9 +116,9 @@ while run_pipeline == True:
                 uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath)
 
                 if "-v" == True:
-                    up.run_uvotdetect_verbose(uvotdetect_command)
+                    # up.run_uvotdetect_verbose(uvotdetect_command)
                 else:
-                    up.run_uvotdetect(uvotdetect_command)
+                    # up.run_uvotdetect(uvotdetect_command)
         
             print("uvotdetect is complete.\n")
     
