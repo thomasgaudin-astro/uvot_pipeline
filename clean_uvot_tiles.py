@@ -117,8 +117,10 @@ while run_pipeline == True:
 
                 if "-v" == True:
                     # up.run_uvotdetect_verbose(uvotdetect_command)
+                    continue
                 else:
                     # up.run_uvotdetect(uvotdetect_command)
+                    continue
         
             print("uvotdetect is complete.\n")
     
