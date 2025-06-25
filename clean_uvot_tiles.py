@@ -219,11 +219,11 @@ while run_pipeline == True:
                     #if reference.img and observation.img do not exist, unzip files.
                     if os.path.exists(f'{obs_directory}/sw{ref_frame}uw1_sk.img.gz') == False:
                         #unzip reference image
-                        gunzip(f'{obs_directory}/sw{ref_frame}uw1_sk.img.gz')
+                        os.system(f'gunzip {obs_directory}/sw{ref_frame}uw1_sk.img.gz')
 
                     if os.path.exists(f'{obs_directory}/sw{obs_frame}uw1_sk.img.gz') == False:
                         #unzip reference image
-                        gunzip(f'{obs_directory}/sw{obs_frame}uw1_sk.img.gz')
+                        os.system(f'gunzip {obs_directory}/sw{obs_frame}uw1_sk.img.gz')
                     
                     #create the command to run uvotunicorr
                     unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
