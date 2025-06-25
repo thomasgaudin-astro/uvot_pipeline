@@ -386,7 +386,7 @@ def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
         
                 sep = star1_coords.separation(star2_coords).to(u.arcsecond) / u.arcsecond
         
-                if sep <= 45:
+                if sep <= 31:
                     nearby_stars.append(j)
                 
             else:
