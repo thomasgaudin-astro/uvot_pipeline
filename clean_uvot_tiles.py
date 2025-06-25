@@ -41,7 +41,7 @@ print('Starting the S-CUBED UVOT Cleaning Pipeline.\n')
 run_pipeline = True
 
 while run_pipeline == True:
-    if "-rb" == True:
+    if args.verbose:
         print('Frames with no aspect correction will be removed.')
     
     else:
@@ -96,7 +96,7 @@ while run_pipeline == True:
         if '.DS_Store' in all_filepaths:
             all_filepaths.remove('.DS_Store')
         
-        if '-nd' == True:
+        if args.no_detect:
             continue
         else:
     
@@ -115,11 +115,11 @@ while run_pipeline == True:
                 
                 uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath)
 
-                if "-v" == True:
-                    # up.run_uvotdetect_verbose(uvotdetect_command)
+                if args.verbose:
+                    up.run_uvotdetect_verbose(uvotdetect_command)
                     continue
                 else:
-                    # up.run_uvotdetect(uvotdetect_command)
+                    up.run_uvotdetect(uvotdetect_command)
                     continue
         
             print("uvotdetect is complete.\n")
@@ -138,7 +138,7 @@ while run_pipeline == True:
         print("Checking Frame Aspect Correction.")
         print("Identifying Frames with No Aspect Correction.")
 
-        if "-v" == True:
+        if args.verbose:
             aspect_uncorrected_frames = up.check_aspect_correction_verbose(filepath)
         else:
             aspect_uncorrected_frames = up.check_aspect_correction(filepath)
@@ -154,7 +154,7 @@ while run_pipeline == True:
             continue
         
         else:
-            if '-rb' == True:
+            if args.remove_bad:
                 print("Removing Bad Frames.")
                 
                 out_filepath = filepath+'/AspectNone'
@@ -251,7 +251,7 @@ while run_pipeline == True:
         print("Aspect Correction Check is complete.\n")
         
     print('First Pass finished.')
-    if '-rb' == True:
+    if args.remove_bad:
         print('No more actions needed.')
         print('Exiting Cleaning Pipeline')
         
