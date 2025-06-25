@@ -221,7 +221,7 @@ while run_pipeline == True:
                     unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
                     
                     #run uvotunicorr
-                    if "-v" == True:
+                    if args.verbose:
                         up.run_uvotunicorr_verbose(unicorr_command)
                     else:
                         up.run_uvotunicorr(unicorr_command)
