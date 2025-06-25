@@ -372,8 +372,8 @@ def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
     #loop over all bright central stars
     #use positions to calculate separation between each star
     #remove stars closer together than 1 arcminute
-    for i in range(16):
-        for j in range(16):
+    for i in range(num_stars+1):
+        for j in range(num_stars+1):
     
             if i != j:
                 star1_ra = bright_stars.iloc[i, 0]
