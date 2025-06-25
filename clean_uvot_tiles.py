@@ -97,7 +97,7 @@ while run_pipeline == True:
             all_filepaths.remove('.DS_Store')
         
         if args.no_detect:
-            continue
+            print('uvotdetect was skipped.')
         else:
     
             print("Running uvotdetect.")
@@ -117,10 +117,8 @@ while run_pipeline == True:
 
                 if args.verbose:
                     up.run_uvotdetect_verbose(uvotdetect_command)
-                    continue
                 else:
                     up.run_uvotdetect(uvotdetect_command)
-                    continue
         
             print("uvotdetect is complete.\n")
     
