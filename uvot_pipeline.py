@@ -386,7 +386,7 @@ def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
         
                 sep = star1_coords.separation(star2_coords).to(u.arcsecond) / u.arcsecond
         
-                if sep <= 60:
+                if sep <= 45:
                     nearby_stars.append(j)
                 
             else:
@@ -423,7 +423,7 @@ def remove_separate_stars(ref_bright_stars, obs_bright_stars):
     
             sep_frame.loc[ref_ind, obs_ind] = obs_star.separation(ref_star).to(u.arcsecond) / u.arcsecond
     
-    sep_frame = sep_frame.where(sep_frame<(45.0*u.arcsecond)).dropna(axis=1, how='all').dropna(axis=0, how='all')
+    sep_frame = sep_frame.where(sep_frame<(30.0)).dropna(axis=1, how='all').dropna(axis=0, how='all')
 
     if len(sep_frame.index) == len(sep_frame.columns):
         
