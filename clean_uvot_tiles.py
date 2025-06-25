@@ -11,6 +11,7 @@ import pandas as pd
 import shutil
 import uvot_pipeline as up
 import argparse
+from sh import gunzip
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
@@ -214,6 +215,15 @@ while run_pipeline == True:
                     
                     #copy reference image to uncorrected observation folder
                     shutil.copy(ref_file_path, obs_directory)
+                    
+                    #if reference.img and observation.img do not exist, unzip files.
+                    if os.path.exists(f'{obs_directory}/sw{ref_frame}uw1_sk.img.gz') == False:
+                        #unzip reference image
+                        gunzip(f'{obs_directory}/sw{ref_frame}uw1_sk.img.gz')
+
+                    if os.path.exists(f'{obs_directory}/sw{obs_frame}uw1_sk.img.gz') == False:
+                        #unzip reference image
+                        gunzip(f'{obs_directory}/sw{obs_frame}uw1_sk.img.gz')
                     
                     #create the command to run uvotunicorr
                     unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
