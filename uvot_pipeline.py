@@ -111,13 +111,13 @@ def run_fkeyprint_verbose(fkeyprint_command):
 def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     if obspath:
-        ref_filepath = obspath+f'/sw{ref_frame}uw1_sk.img.gz[1]'
-        obs_filepath = obspath+f'/sw{obs_frame}uw1_sk.img.gz[1]'
+        ref_filepath = obspath+f'/sw{ref_frame}uw1_sk.img[1]'
+        obs_filepath = obspath+f'/sw{obs_frame}uw1_sk.img[1]'
         ref_reg_filepath = obspath+'/ref.reg'
         obs_reg_filepath = obspath+'/obs.reg'
     else:
-        ref_filepath = f'sw{ref_frame}uw1_sk.img.gz[1]'
-        obs_filepath = f'sw{obs_frame}uw1_sk.img.gz[1]'
+        ref_filepath = f'sw{ref_frame}uw1_sk.img[1]'
+        obs_filepath = f'sw{obs_frame}uw1_sk.img[1]'
         ref_reg_filepath = 'ref.reg'
         obs_reg_filepath = 'obs.reg'
     
