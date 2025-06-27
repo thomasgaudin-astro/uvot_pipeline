@@ -140,7 +140,7 @@ while run_pipeline == True:
             subpath = os.path.join(filepath, path)
             img_path_fill = f'uvot/image/sw{path}uw1_sk.img'
 
-            img_path = os.path.join(supath, img_path_fill)
+            img_path = os.path.join(subpath, img_path_fill)
             #if .img frame does not exist, unzip file and keep original.
             if os.path.exists(img_path) == False:
                 #unzip reference image
