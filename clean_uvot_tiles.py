@@ -144,7 +144,7 @@ while run_pipeline == True:
             #if .img frame does not exist, unzip file and keep original.
             if os.path.exists(img_path) == False:
                 #unzip reference image
-                os.system(f'gunzip -k {obs_directory}/sw{ref_frame}uw1_sk.img.gz')
+                os.system(f'gunzip -k {img_path}.gz')
 
         print("All image files unzipped.\n")
     
