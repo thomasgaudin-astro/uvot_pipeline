@@ -392,7 +392,7 @@ def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
             else:
                 continue
     
-    star_indices = [star for star in range(16) if star not in nearby_stars]
+    star_indices = [star for star in range(num_stars) if star not in nearby_stars]
     bright_stars = bright_stars.iloc[star_indices, :]
 
     return bright_stars
