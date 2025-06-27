@@ -133,6 +133,18 @@ while run_pipeline == True:
         up.remove_smeared(sc_tile, smeared_frames)
     
         print("Smear Removal is complete.\n")
+
+        print("Unzipping all image files.")
+
+        for path in all_filepaths:
+            subpath = os.path.join(filepath, path)
+            img_path_fill = f'uvot/image/sw{path}uw1_sk.img'
+
+            img_path = os.path.join(supath, img_path_fill)
+            #if .img frame does not exist, unzip file and keep original.
+            if os.path.exists(img_path) == False:
+                #unzip reference image
+                os.system(f'gunzip -k {obs_directory}/sw{ref_frame}uw1_sk.img.gz')
     
         print("Checking Frame Aspect Correction.")
         print("Identifying Frames with No Aspect Correction.")
@@ -216,14 +228,6 @@ while run_pipeline == True:
                     #copy reference image to uncorrected observation folder
                     shutil.copy(ref_file_path, obs_directory)
                     
-                    #if reference.img and observation.img do not exist, unzip files.
-                    if os.path.exists(f'{obs_directory}/sw{ref_frame}uw1_sk.img') == False:
-                        #unzip reference image
-                        os.system(f'gunzip -k {obs_directory}/sw{ref_frame}uw1_sk.img.gz')
-
-                    if os.path.exists(f'{obs_directory}/sw{obs_frame}uw1_sk.img') == False:
-                        #unzip reference image
-                        os.system(f'gunzip -k {obs_directory}/sw{obs_frame}uw1_sk.img.gz')
                     
                     #create the command to run uvotunicorr
                     unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
