@@ -145,6 +145,8 @@ while run_pipeline == True:
             if os.path.exists(img_path) == False:
                 #unzip reference image
                 os.system(f'gunzip -k {obs_directory}/sw{ref_frame}uw1_sk.img.gz')
+
+        print("All image files unzipped.\n")
     
         print("Checking Frame Aspect Correction.")
         print("Identifying Frames with No Aspect Correction.")
@@ -204,7 +206,7 @@ while run_pipeline == True:
                 #generate path to the reference frame detect.fits
                 ref_detect_path = f'{filepath}/{ref_frame}/uvot/image/detect.fits'
                 #generate path to reference image
-                ref_file_path = f'{filepath}/{ref_frame}/uvot/image/sw{ref_frame}uw1_sk.img.gz'
+                ref_file_path = f'{filepath}/{ref_frame}/uvot/image/sw{ref_frame}uw1_sk.img'
                 #find brightest stars in the center of the reference frame
                 ref_bright_stars = up.find_brightest_central_stars(ref_detect_path, num_stars=num_stars, side_buffer=side_buffer)
                 
