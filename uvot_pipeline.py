@@ -270,7 +270,7 @@ def check_aspect_correction(filepath):
         else:
             subpath = os.path.join(filepath, path)
 
-            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
+            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
             full_sourcepath = os.path.join(subpath, sourcepath_fill)
             
             exists = os.path.exists(full_sourcepath)
