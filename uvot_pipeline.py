@@ -29,6 +29,7 @@ def create_uvotdetect_bash_command(source_path, output_path, exposure_path):
         threshold=3 \\
         sexfile=DEFAULT \\
         plotsrc=NO \\
+        regfile="detect.reg" \\
         zerobkg=0.03 \\
         expopt=BETA \\
         calibrate=YES \\
