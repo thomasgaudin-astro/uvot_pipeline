@@ -16,7 +16,7 @@ from astropy.table import QTable
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
-def create_uvotdetect_bash_command(source_path, output_path, exposure_path):
+def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
     bash_command = f"""
@@ -29,7 +29,7 @@ def create_uvotdetect_bash_command(source_path, output_path, exposure_path):
         threshold=3 \\
         sexfile=DEFAULT \\
         plotsrc=NO \\
-        regfile="detect.reg" \\
+        regfile={reg_path} \\
         zerobkg=0.03 \\
         expopt=BETA \\
         calibrate=YES \\
