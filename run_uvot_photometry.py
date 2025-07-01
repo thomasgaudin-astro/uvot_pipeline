@@ -142,7 +142,7 @@ if '.DS_Store' in all_target_filepaths:
 
 #loop through all filepaths and generate new source region files
 for obs in all_target_filepaths:
-    up.write_source_reg_files(closest_tile, obs, args.source_name, ars.source_ra, args.source_dec)
+    up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
 
 # Loop through filepaths and run uvotsource
 for obs in all_target_filepaths:
