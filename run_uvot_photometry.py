@@ -140,11 +140,23 @@ all_target_filepaths = sorted(os.listdir(tile_filepath))
 if '.DS_Store' in all_target_filepaths:
     all_target_filepaths.remove('.DS_Store')
 
+#loop through all filepaths and generate new source region files
+for obs in all_target_filepaths:
+    write_source_reg_files(closest_tile, obs, args.source_name, ars.source_ra, args.source_dec)
+
 # Loop through filepaths and run uvotsource
 for obs in all_target_filepaths:
 
-    # Write command for uvotsource
-    uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
+    #path to improved source region files
+    reg_filepath = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
+
+    #check to make sure new region file exists
+    if os.path.exists(reg_filepath) == True:
+        # Write command for uvotsource using new region file
+        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, reg_filepath, args.bkg_reg, args.source_name)
+    else:
+        # Write command for uvotsource using old region file if new one cannot be found
+        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
     
     if "-v" == True:
         up.run_uvotsource_verbose(uvotsource_command)
