@@ -140,6 +140,31 @@ all_target_filepaths = sorted(os.listdir(tile_filepath))
 if '.DS_Store' in all_target_filepaths:
     all_target_filepaths.remove('.DS_Store')
 
+print('\nRe-running uvotdetect on all tiles')
+# Gotta re-run uvotdetect to account for any changes from aspect correction
+for path in all_target_filepaths:
+    subpath = os.path.join(filepath, path)
+    
+    sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
+    outpath_fill = 'uvot/image/detect.fits'
+    exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
+    detectpath_fill = 'uvot/image/detect.reg'
+    
+    full_sourcepath = os.path.join(subpath, sourcepath_fill)
+    full_outpath = os.path.join(subpath, outpath_fill)
+    full_exppath = os.path.join(subpath, exppath_fill)
+    full_detectpath = os.path.join(subpath, detectpath_fill)
+
+    uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+
+    if args.verbose:
+        up.run_uvotdetect_verbose(uvotdetect_command)
+    else:
+        up.run_uvotdetect(uvotdetect_command)
+        
+print('All runs of uvotdetect are now complete.\n')
+
+print('Generating better region files.')
 #loop through all filepaths and generate new source region files if detect.fits exists
 for obs in all_target_filepaths:
 
@@ -149,6 +174,9 @@ for obs in all_target_filepaths:
     else:
         continue
 
+print('Region files generated.\n')
+
+print('Running uvotsource on all files.')
 # Loop through filepaths and run uvotsource
 for obs in all_target_filepaths:
 
