@@ -144,7 +144,7 @@ if '.DS_Store' in all_target_filepaths:
 for obs in all_target_filepaths:
 
     detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/detect.fits'
-    if os.path.exits(detect_path) == True:
+    if os.path.exists(detect_path) == True:
         up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
     else:
         continue
