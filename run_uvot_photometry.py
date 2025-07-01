@@ -140,9 +140,14 @@ all_target_filepaths = sorted(os.listdir(tile_filepath))
 if '.DS_Store' in all_target_filepaths:
     all_target_filepaths.remove('.DS_Store')
 
-#loop through all filepaths and generate new source region files
+#loop through all filepaths and generate new source region files if detect.fits exists
 for obs in all_target_filepaths:
-    up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
+
+    detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/detect.fits'
+    if os.path.exits(detect_path) == True:
+        up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
+    else:
+        continue
 
 # Loop through filepaths and run uvotsource
 for obs in all_target_filepaths:
