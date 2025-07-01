@@ -490,3 +490,55 @@ def create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=None):
     
     with open(obs_filename, mode='w', encoding='utf-8') as obsfile:
         obsfile.write(obs_reg_text)
+
+def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec):
+
+    #generate source coordinates
+    source_coords = SkyCoord(source_ra, source_dec, unit='deg', frame='icrs')
+    
+    trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
+    detect_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/detect.fits'
+    
+    #generate  blank dataframe
+    detected_frame = pd.DataFrame(columns=['RA', 'DEC', 'SEP'])
+    
+    #open detect.fits
+    with fits.open(detect_filepath) as hdul:
+        head = hdul[0].header
+        data = hdul[1].data
+
+    #loop through all the sources in detect.fits, append coordinates to dataframe
+    for ind, val in enumerate(data):
+        detected_frame.loc[ind, 'RA'] = val['RA']
+        detected_frame.loc[ind, 'DEC'] = val['DEC']
+
+    #new .reg filename 
+    reg_filename = f'{trunc_obs_filepath + source_name}_source.reg'
+
+    #loop through all the stars in detect.fits
+    #find the closest one to coordinate positions of source
+    #use those coords to write a new .reg file out in the obs filder
+    for ind in detected_frame.index:
+        
+        #generate a SkyCoord object for each star
+        ra = detected_frame.loc[ind, 'RA']
+        dec = detected_frame.loc[ind, 'DEC']
+        
+        star_coords = SkyCoord(ra, dec, unit='deg', frame='fk5')
+
+        #calculate separation to source and append to dataframe
+        sep = star_coords.separation(source_coords).to(u.arcsecond)
+        detected_frame.loc[ind, 'SEP'] = sep
+
+        #look for star with min separation and grab coordinates of that star
+        min_sep = detected_frame['SEP'].idxmin()
+    
+        min_ra = detected_frame.loc[min_sep, 'RA']
+        min_dec = detected_frame.loc[min_sep, 'DEC']
+
+        #generate new region text and write out file
+        new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
+    
+        with open(reg_filename, mode='w', encoding='utf-8') as regfile:
+            regfile.write(new_reg_text)
+            
