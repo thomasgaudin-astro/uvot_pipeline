@@ -143,7 +143,7 @@ if '.DS_Store' in all_target_filepaths:
 print('\nRe-running uvotdetect on all tiles')
 # Gotta re-run uvotdetect to account for any changes from aspect correction
 for path in all_target_filepaths:
-    subpath = os.path.join(filepath, path)
+    subpath = os.path.join(tile_filepath, path)
     
     sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
     outpath_fill = 'uvot/image/detect.fits'
