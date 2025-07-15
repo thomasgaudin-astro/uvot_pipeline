@@ -164,24 +164,24 @@ for path in all_target_filepaths:
         
 print('All runs of uvotdetect are now complete.\n')
 
-print('Starting initial run of uvotsource.')
-# Loop through filepaths and run uvotsource
-for obs in all_target_filepaths:
+# print('Starting initial run of uvotsource.')
+# # Loop through filepaths and run uvotsource
+# for obs in all_target_filepaths:
 
-    # Write command for uvotsource using old region file if new one cannot be found
-    uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
+#     # Write command for uvotsource using old region file if new one cannot be found
+#     uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
 
-    if "-v" == True:
-        up.run_uvotsource_verbose(uvotsource_command)
-    else:
-        up.run_uvotsource(uvotsource_command)
-print('First run of aperture photometry complete.')
+#     if "-v" == True:
+#         up.run_uvotsource_verbose(uvotsource_command)
+#     else:
+#         up.run_uvotsource(uvotsource_command)
+# print('First run of aperture photometry complete.')
 
 print('Generating better region files.')
-#loop through all filepaths and generate new source region files if source_name_source.fits exists
+#loop through all filepaths and generate new source region files if detect.fits exists
 for obs in all_target_filepaths:
 
-    detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
+    detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/detect.fits'
     if os.path.exists(detect_path) == True:
         up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
     else:
@@ -287,11 +287,11 @@ for obs in all_target_filepaths:
 
     #remove source.fits if it exists
     if os.path.exists(source_fitsfile) == True:
-        os.remove(source_fits_file)
+        os.remove(source_fitsfile)
 
     #remove source.reg if it exists
     if os.path.exists(source_regfile) == True:
-        os.remove(source_reg_file)
+        os.remove(source_regfile)
 
 print("All source.fits files deleted.")
 
