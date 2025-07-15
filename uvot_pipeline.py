@@ -536,9 +536,14 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
         min_ra = detected_frame.loc[min_sep, 'RA']
         min_dec = detected_frame.loc[min_sep, 'DEC']
 
-        #generate new region text and write out file
-        new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
-    
-        with open(reg_filename, mode='w', encoding='utf-8') as regfile:
-            regfile.write(new_reg_text)
+        #check to see how far away the nearest star is before writing a region file
+        #if distance is > 5 arcseconds, no new region file is created.
+        if min_sep <= (5 * u.arcsecond):
+            #generate new region text and write out file
+            new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
+        
+            with open(reg_filename, mode='w', encoding='utf-8') as regfile:
+                regfile.write(new_reg_text)
+        else:
+            continue
             
