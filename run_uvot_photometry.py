@@ -263,6 +263,13 @@ source_data['MJD'] = times
 #remove any sources with magnitude of 99
 source_data = source_data[source_data['MAG'] < 99]
 
+#take mean and standard deviation of magnitude
+source_mean_mag = np.mean(source_data['MAG'])
+source_std_dev_mag = np.std(source_data['MAG'])
+
+#clip any values that are not within 5 sigma of the mean
+source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
+
 #copy just the values that we want to a sliced DataFrame
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
 
