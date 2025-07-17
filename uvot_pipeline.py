@@ -239,7 +239,7 @@ def detect_smeared_frames(tile_name):
                                     e = c/a
                                     #print(e)
                                 
-                                    if e >= 0.55:
+                                    if e >= 0.5:
                                         smeared.append(path)
     
                                 else:
