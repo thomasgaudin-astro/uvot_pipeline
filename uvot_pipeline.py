@@ -223,17 +223,25 @@ def detect_smeared_frames(tile_name):
                             subpath3 = os.path.join(subpath2, impath)
                             for file in os.listdir(subpath3):
                                 if file == 'detect.fits':
-    
                                     filename = os.path.join(subpath3, file)
     
     #                                     print(f'Opening File {filename}')
-    
+
                                     with fits.open(filename) as hdul:
                                         head = hdul[0].header
                                         data = hdul[1].data
-                    
-                                    a = np.mean(data['PROF_MAJOR'])
-                                    b = np.mean(data['PROF_MINOR'])
+
+                                    detected_frame = pd.DataFrame(columns=['PROF_MAJOR', 'PROF_MINOR', 'FLAGS'])
+
+                                    for ind, val in enumerate(data):
+                                        detected_frame.loc[ind, 'PROF_MAJOR'] = val['PROF_MAJOR']
+                                        detected_frame.loc[ind, 'PROF_MINOR'] = val['PROF_MINOR']
+                                        detected_frame.loc[ind, 'FLAGS'] = val['FLAGS']
+
+                                    detected_frame = detected_frame[detected_frame['FLAGS'] == 0]
+
+                                    a = np.mean(detected_frame['PROF_MAJOR'])
+                                    b = np.mean(detected_frame['PROF_MINOR'])
                         
                                     c = math.sqrt(a**2 - b**2)
                                     e = c/a
