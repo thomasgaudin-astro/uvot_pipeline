@@ -15,6 +15,7 @@ from sh import gunzip
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
+parser.add_argument('tile_name', help="The name of the tile. This will be used to identify which files to clean.")
 parser.add_argument('-nd', '--no_detect', action='store_true', help='Skips uvotdetect command for each tile.')
 parser.add_argument('-rb', '--remove_bad', action='store_true', help='Removes bad aspect correction tiles instead of correcting them.')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
@@ -33,11 +34,21 @@ os.environ['CALDBALIAS'] = '/bulk/pkg/caldb/software/tools/alias_config.fits'
 # Ensure pfiles directory exists
 os.makedirs("/tmp/pfiles", exist_ok=True)
 
+#run the pipeline
+print(f'Starting the S-CUBED UVOT Cleaning Pipeline for the tile {args.tile_name}.\n')
+
 #read in list of tiles
 tiles = pd.read_csv('scubed_tiles.csv')
 
-#run the pipeline
-print('Starting the S-CUBED UVOT Cleaning Pipeline.\n')
+#make sure each tile name matches the folder names
+for val in range(len(tiles.index)):
+    new_tile_name = tiles.loc[val, 'Tile Name'].strip('\xa0')
+    tiles.loc[val, 'New Tile Name'] = new_tile_name.replace("_", " ")
+
+tile_index = tiles.index[tiles['New Tile Name'] == args.tile_name].tolist()[0]
+tile_ra = tiles.loc[tile_index, 'RA']
+tile_dec = tiles.loc[tile_index, 'DEC']
+old_tile_name = tiles.loc[tile_index, 'Tile Name'].strip('\xa0')
 
 run_pipeline = True
 
@@ -87,7 +98,20 @@ while run_pipeline == True:
             
     #run full cleaning pipeline for each S-CUBED tile.
     # for sc_tile in tiles['Tile Name']:
-    for sc_tile in ['SMC_J0110.1-7236']:
+    for sc_tile in [args.tile_name]:
+
+        print(f'Downloading new data for Tile {sc_tile}.')
+
+        undownloaded_files = up.check_for_undownloaded_files(sc_tile, old_tile_name, tile_ra, tile_dec)
+
+        print(f'Found {len(undownloaded_files)} that need to be downloaded.')
+        if len(undownloaded_files) > 0:
+            print('Downloading new files.')
+            up.download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec)
+            print('All new files downloaded.\n')
+        else:
+            print('No new files to download. Moving on.\n')
+
     
         print(f"Cleaning Data for Tile {sc_tile}.")
         
