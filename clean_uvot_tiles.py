@@ -42,13 +42,13 @@ tiles = pd.read_csv('scubed_tiles.csv')
 
 #make sure each tile name matches the folder names
 for val in range(len(tiles.index)):
-    new_tile_name = tiles.loc[val, 'Tile Name'].strip('\xa0')
-    tiles.loc[val, 'New Tile Name'] = new_tile_name.replace("_", " ")
+    old_tile_name = tiles.loc[val, 'Tile Name'].strip('\xa0')
+    tiles.loc[val, 'New Tile Name'] = old_tile_name.replace("_", " ")
 
-tile_index = tiles.index[tiles['New Tile Name'] == args.tile_name][0]
+tile_index = tiles[tiles['Tile Name'] == args.tile_name]
 tile_ra = tiles.loc[tile_index, 'RA']
 tile_dec = tiles.loc[tile_index, 'DEC']
-old_tile_name = tiles.loc[tile_index, 'Tile Name'].strip('\xa0')
+new_tile_name = tiles.loc[tile_index, 'Tile Name'].strip('\xa0')
 
 run_pipeline = True
 
@@ -102,7 +102,7 @@ while run_pipeline == True:
 
         print(f'Downloading new data for Tile {sc_tile}.')
 
-        undownloaded_files = up.check_for_undownloaded_files(sc_tile, old_tile_name, tile_ra, tile_dec)
+        undownloaded_files = up.check_for_undownloaded_files(sc_tile, new_tile_name, tile_ra, tile_dec)
 
         print(f'Found {len(undownloaded_files)} that need to be downloaded.')
         if len(undownloaded_files) > 0:
