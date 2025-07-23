@@ -205,7 +205,7 @@ def run_uvotsource_verbose(uvotsource_command):
 
     return result.stdout
 
-def check_for_undownloaded_files(tile_name, old_tile_name, tile_ra, tile_dec):
+def check_for_undownloaded_files(tile_name, new_tile_name, tile_ra, tile_dec):
 
     undownloaded_files = []
 
@@ -216,10 +216,11 @@ def check_for_undownloaded_files(tile_name, old_tile_name, tile_ra, tile_dec):
     #only check observations where file name is desired S-CUBED tile
     #if directory doesn't exist for observation, append to undownloaded files  
     for ind, q in enumerate(query):
-        if q.targname == old_tile_name:
+        if q.targname == new_tile_name:
             obsid = query[ind].obsid
             dirpath = f'./S-CUBED/{tile_name}/UVOT/{obsid}'
-            if os.path.isdir(dirpath) == False:
+            smeared_dirpath = f'./S-CUBED/{tile_name}/Smeared/{obsid}'
+            if (os.path.isdir(dirpath) == False) & (os.path.isdir(smeared_dirpath) == False):
                 undownloaded_files.append(obsid)
 
     return undownloaded_files
