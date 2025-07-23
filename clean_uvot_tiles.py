@@ -45,7 +45,7 @@ for val in range(len(tiles.index)):
     new_tile_name = tiles.loc[val, 'Tile Name'].strip('\xa0')
     tiles.loc[val, 'New Tile Name'] = new_tile_name.replace("_", " ")
 
-tile_index = tiles.index[tiles['New Tile Name'] == args.tile_name].tolist()[0]
+tile_index = tiles.index[tiles['New Tile Name'] == args.tile_name][0]
 tile_ra = tiles.loc[tile_index, 'RA']
 tile_dec = tiles.loc[tile_index, 'DEC']
 old_tile_name = tiles.loc[tile_index, 'Tile Name'].strip('\xa0')
