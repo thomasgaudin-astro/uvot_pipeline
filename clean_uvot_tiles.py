@@ -107,7 +107,7 @@ while run_pipeline == True:
         print(f'Found {len(undownloaded_files)} that need to be downloaded.')
         if len(undownloaded_files) > 0:
             print('Downloading new files.')
-            up.download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec)
+            up.download_new_files(undownloaded_files, sc_tile, tile_ra, tile_dec)
             print('All new files downloaded.\n')
         else:
             print('No new files to download. Moving on.\n')
