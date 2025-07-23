@@ -16,6 +16,8 @@ from astropy.table import QTable
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
+from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
+
 def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
@@ -202,6 +204,37 @@ def run_uvotsource_verbose(uvotsource_command):
     print("STDERR:\n", result.stderr)
 
     return result.stdout
+
+def check_for_undownloaded_files(tile_name, old_tile_name, tile_ra, tile_dec):
+
+    undownloaded_files = []
+
+    #Run ObsQuery for all files in the region of the sky that we are interested in
+    query = ObsQuery(ra=tile_ra, dec=tile_dec, radius = 0.18)
+
+    #loop through all queried observations
+    #only check observations where file name is desired S-CUBED tile
+    #if directory doesn't exist for observation, append to undownloaded files  
+    for ind, q in enumerate(query):
+        if q.targname == old_tile_name:
+            obsid = query[ind].obsid
+            dirpath = f'./S-CUBED/{tile_name}/UVOT/{obsid}'
+            if os.path.isdir(dirpath) == False:
+                undownloaded_files.append(obsid)
+
+    return undownloaded_files
+
+def download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec):
+
+    #Run ObsQuery for all files in the region of the sky that we are interested in
+    query = ObsQuery(ra=tile_ra, dec=tile_dec, radius = 0.18)
+
+    #loop through all queried observations
+    #if obsid is in undownloaded_files, download the UVOT data for the observation
+    for ind, q in enumerate(query):
+        if query[ind].obsid in undownloaded_files:
+            Data(obsid=query[ind].obsid, uvot=True, uksdc=True, outdir=f"~/S-CUBED/{tile_name}/UVOT")
+
 
 def detect_smeared_frames(tile_name):
 
