@@ -48,7 +48,7 @@ for val in range(len(tiles.index)):
 tile_index = tiles.index[tiles['Tile Name'] == args.tile_name].tolist()[0]
 tile_ra = tiles.loc[tile_index, 'RA']
 tile_dec = tiles.loc[tile_index, 'DEC']
-new_tile_name = tiles.loc[tile_index, 'Tile Name'].strip('\xa0')
+new_tile_name = tiles.loc[tile_index, 'New Tile Name']
 
 run_pipeline = True
 
