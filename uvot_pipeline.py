@@ -572,20 +572,20 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
         sep = star_coords.separation(source_coords).to(u.arcsecond)
         detected_frame.loc[ind, 'SEP'] = sep
 
-        #look for star with min separation and grab coordinates of that star
-        min_sep = detected_frame['SEP'].idxmin()
-    
-        min_ra = detected_frame.loc[min_sep, 'RA']
-        min_dec = detected_frame.loc[min_sep, 'DEC']
+    #look for star with min separation and grab coordinates of that star
+    min_sep = detected_frame['SEP'].idxmin()
 
-        #check to see how far away the nearest star is before writing a region file
-        #if distance is > 5 arcseconds, no new region file is created.
-        if detected_frame.loc[min_sep, 'SEP'] <= (10 * u.arcsecond):
-            #generate new region text and write out file
-            new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
-        
-            with open(reg_filename, mode='w', encoding='utf-8') as regfile:
-                regfile.write(new_reg_text)
-        else:
-            continue
+    min_ra = detected_frame.loc[min_sep, 'RA']
+    min_dec = detected_frame.loc[min_sep, 'DEC']
+
+    #check to see how far away the nearest star is before writing a region file
+    #if distance is > 5 arcseconds, no new region file is created.
+    if detected_frame.loc[min_sep, 'SEP'] <= (10 * u.arcsecond):
+        #generate new region text and write out file
+        new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
+    
+        with open(reg_filename, mode='w', encoding='utf-8') as regfile:
+            regfile.write(new_reg_text)
+    else:
+        continue
             
