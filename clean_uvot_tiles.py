@@ -217,18 +217,16 @@ while run_pipeline == True:
                 counter = 0
 
                 while detect_frame_exists == False:
-                
-                    if os.path.exists(full_sourcepath) == False:
 
-                        counter += 1
+                    counter += 1
 
-                        new_ref_frame = corrected_frames[counter]
+                    new_ref_frame = corrected_frames[counter]
 
-                        new_subpath = os.path.join(new_ref_frame, filepath)
-                        new_sourcepath_fill = 'uvot/image/detect.fits'
-                        new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
+                    new_subpath = os.path.join(new_ref_frame, filepath)
+                    new_sourcepath_fill = 'uvot/image/detect.fits'
+                    new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
 
-                        detect_frame_exists = os.path.exists(new_full_sourcepath)
+                    detect_frame_exists = os.path.exists(new_full_sourcepath)
                     
                 
                 print(f'The Reference Frame is {ref_frame}')
