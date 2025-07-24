@@ -11,8 +11,10 @@ import pandas as pd
 import shutil
 import uvot_pipeline as up
 import argparse
-from sh import gunzip
 import warnings
+
+from tqdm import tqdm
+from sh import gunzip
 from astropy.units import UnitsWarning
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
@@ -132,7 +134,7 @@ while run_pipeline == True:
     
             print("Running uvotdetect.")
             
-            for path in all_filepaths:
+            for path in tdqm(all_filepaths):
                 subpath = os.path.join(filepath, path)
                 
                 sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
