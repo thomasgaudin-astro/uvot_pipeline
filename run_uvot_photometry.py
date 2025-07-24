@@ -24,6 +24,7 @@ import uvot_pipeline as up
 
 from swifttools.swift_too import Clock
 
+from astropy.units import UnitsWarning
 
 # Set all required environment variables
 os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
@@ -142,7 +143,7 @@ if '.DS_Store' in all_target_filepaths:
 
 print('\nRe-running uvotdetect on all tiles')
 # Gotta re-run uvotdetect to account for any changes from aspect correction
-for path in all_target_filepaths:
+for path in tqdm(all_target_filepaths):
     subpath = os.path.join(tile_filepath, path)
     
     sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
@@ -191,7 +192,7 @@ print('Region files generated.\n')
 
 print('Running uvotsource on all files.')
 # Loop through filepaths and run uvotsource
-for obs in all_target_filepaths:
+for obs in tqdm(all_target_filepaths):
 
     #path to improved source region files
     reg_filepath = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
