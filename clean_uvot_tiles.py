@@ -212,21 +212,24 @@ while run_pipeline == True:
                 subpath = os.path.join(ref_frame, filepath)
                 sourcepath_fill = 'uvot/image/detect.fits'
                 full_sourcepath = os.path.join(subpath, sourcepath_fill)
+
+                detect_frame_exists = os.path.exists(full_sourcepath)
+                counter = 0
+
+                while detect_frame_exists == False:
                 
-                if os.path.exists(full_sourcepath) == False:
-                    ref_frame = corrected_frames[1]
-                    
-                    subpath = os.path.join(ref_frame, filepath)
-                    sourcepath_fill = 'uvot/image/detect.fits'
-                    full_sourcepath = os.path.join(subpath, sourcepath_fill)
-                    
                     if os.path.exists(full_sourcepath) == False:
-                        
-                        ref_frame = corrected_frames[2]
-                        
-                        subpath = os.path.join(ref_frame, filepath)
-                        sourcepath_fill = 'uvot/image/detect.fits'
-                        full_sourcepath = os.path.join(subpath, sourcepath_fill)
+
+                        counter += 1
+
+                        new_ref_frame = corrected_frames[counter]
+
+                        new_subpath = os.path.join(new_ref_frame, filepath)
+                        new_sourcepath_fill = 'uvot/image/detect.fits'
+                        new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
+
+                        detect_frame_exists = os.path.exists(new_full_sourcepath)
+                    
                 
                 print(f'The Reference Frame is {ref_frame}')
                 #generate path to the reference frame detect.fits
