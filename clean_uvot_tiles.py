@@ -165,12 +165,16 @@ while run_pipeline == True:
         for path in all_filepaths:
             subpath = os.path.join(filepath, path)
             img_path_fill = f'uvot/image/sw{path}uw1_sk.img'
+            unzipped_img_path_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
 
             img_path = os.path.join(subpath, img_path_fill)
+            unzipped_img_path = os.path.join(subpath, unzipped_img_path_fill)
+
             #if .img frame does not exist, unzip file and keep original.
             if os.path.exists(img_path) == False:
-                #unzip reference image
-                os.system(f'gunzip -k {img_path}.gz')
+                #unzip reference image if it exists
+                if os.path.exists(unzipped_img_path) == True:
+                    os.system(f'gunzip -k {img_path}.gz')
 
         print("All image files unzipped.\n")
     
@@ -213,7 +217,7 @@ while run_pipeline == True:
                 subpath = os.path.join(filepath, ref_frame)
                 sourcepath_fill = 'uvot/image/detect.fits'
                 full_sourcepath = os.path.join(subpath, sourcepath_fill)
-                
+
                 detect_frame_exists = os.path.exists(full_sourcepath)
                 counter = 0
 
