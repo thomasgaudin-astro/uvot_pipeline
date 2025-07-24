@@ -13,6 +13,7 @@ import uvot_pipeline as up
 import argparse
 from sh import gunzip
 import warnings
+from astropy.units import UnitsWarning
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
