@@ -179,8 +179,10 @@ while run_pipeline == True:
 
         if args.verbose:
             aspect_uncorrected_frames = up.check_aspect_correction_verbose(filepath)
+            aspect_direct_frames = up.check_direct_corrections_verbose(filepath)
         else:
             aspect_uncorrected_frames = up.check_aspect_correction(filepath)
+            aspect_direct_frames = up.check_direct_corrections(filepath)
         num_uncorrected = len(aspect_uncorrected_frames)
         
         new_all_filepaths = sorted(os.listdir(filepath))
@@ -203,31 +205,28 @@ while run_pipeline == True:
             else:
                 print("Correcting Bad Frames.")
                 
-                #list the corrected frames
-                corrected_frames = [frame for frame in new_all_filepaths if frame not in aspect_uncorrected_frames]
+                #list the direct frames
+                direct_frames = [frame for frame in new_all_filepaths if frame not in aspect_direct_frames]
                 
                 #reference frame will be first corrected frame that exists
-                ref_frame = corrected_frames[0]
-                print(corrected_frames)
+                ref_frame = direct_frames[0]
                 subpath = os.path.join(filepath, ref_frame)
                 sourcepath_fill = 'uvot/image/detect.fits'
                 full_sourcepath = os.path.join(subpath, sourcepath_fill)
-                print(full_sourcepath)
+                
                 detect_frame_exists = os.path.exists(full_sourcepath)
                 counter = 0
-                print(detect_frame_exists, ref_frame)
+
                 while detect_frame_exists == False:
 
                     counter += 1
 
-                    new_ref_frame = corrected_frames[counter]
+                    new_ref_frame = direct_frames[counter]
 
                     new_subpath = os.path.join(filepath, new_ref_frame)
                     new_sourcepath_fill = 'uvot/image/detect.fits'
                     new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
-                    print(new_full_sourcepath)
                     detect_frame_exists = os.path.exists(new_full_sourcepath)
-                    print(detect_frame_exists, new_ref_frame)
                     
                 
                 print(f'The Reference Frame is {ref_frame}')
