@@ -36,7 +36,7 @@ os.environ['CALDBALIAS'] = '/bulk/pkg/caldb/software/tools/alias_config.fits'
 os.makedirs("/tmp/pfiles", exist_ok=True)
 
 #ignore UnitsWarnings
-warnings.filter_warnings("ignore", category=UnitsWarning)
+warnings.filterwarnings("ignore", category=UnitsWarning)
 
 #run the pipeline
 print(f'Starting the S-CUBED UVOT Cleaning Pipeline for the tile {args.tile_name}.\n')
