@@ -208,14 +208,14 @@ while run_pipeline == True:
                 
                 #reference frame will be first corrected frame that exists
                 ref_frame = corrected_frames[0]
-                
+                print(corrected_frames)
                 subpath = os.path.join(ref_frame, filepath)
                 sourcepath_fill = 'uvot/image/detect.fits'
                 full_sourcepath = os.path.join(subpath, sourcepath_fill)
 
                 detect_frame_exists = os.path.exists(full_sourcepath)
                 counter = 0
-
+                print(detect_frames_exist, ref_frame)
                 while detect_frame_exists == False:
 
                     counter += 1
@@ -227,6 +227,7 @@ while run_pipeline == True:
                     new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
 
                     detect_frame_exists = os.path.exists(new_full_sourcepath)
+                    print(detect_frame_exists, new_ref_frame)
                     
                 
                 print(f'The Reference Frame is {ref_frame}')
