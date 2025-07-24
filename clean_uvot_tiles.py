@@ -134,7 +134,7 @@ while run_pipeline == True:
     
             print("Running uvotdetect.")
             
-            for path in tdqm(all_filepaths):
+            for path in tqdm(all_filepaths):
                 subpath = os.path.join(filepath, path)
                 
                 sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
