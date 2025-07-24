@@ -26,6 +26,8 @@ from swifttools.swift_too import Clock
 
 from astropy.units import UnitsWarning
 
+from tqdm import tqdm
+
 # Set all required environment variables
 os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
 os.environ['PFILES'] = f"/tmp/pfiles;{os.environ['HEADAS']}/syspfiles"
