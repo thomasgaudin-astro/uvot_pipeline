@@ -215,7 +215,7 @@ while run_pipeline == True:
 
                 detect_frame_exists = os.path.exists(full_sourcepath)
                 counter = 0
-                print(detect_frames_exist, ref_frame)
+                print(detect_frame_exists, ref_frame)
                 while detect_frame_exists == False:
 
                     counter += 1
