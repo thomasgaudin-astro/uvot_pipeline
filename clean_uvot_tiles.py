@@ -35,6 +35,9 @@ os.environ['CALDBALIAS'] = '/bulk/pkg/caldb/software/tools/alias_config.fits'
 # Ensure pfiles directory exists
 os.makedirs("/tmp/pfiles", exist_ok=True)
 
+#ignore UnitsWarnings
+warnings.filter_warnings("ignore", category=UnitsWarning)
+
 #run the pipeline
 print(f'Starting the S-CUBED UVOT Cleaning Pipeline for the tile {args.tile_name}.\n')
 
@@ -251,15 +254,11 @@ while run_pipeline == True:
                     #generate path to detect.fits for observation frame
                     obs_detect_path = f'{filepath}/{obs_frame}/uvot/image/detect.fits'
 
-                    with warnings.catch_warnings():
-                        warnings.filter_warnings("ignore", message="UnitsWarning: 'count/s/arcsec**2' contains multiple slashes, which is discouraged by the FITS standard [astropy.units.format.generic]")
-                        warnings.filter_warnings("ignore", message="UnitsWarning: 'sigma' did not parse as fits unit: At col 0, Unit 'sigma' not supported by the FITS standard.  If this is meant to be a custom unit, define it with 'u.def_unit'. To have it recognized inside a file reader or other code, enable it with 'u.add_enabled_units'. For details, see https://docs.astropy.org/en/latest/units/combining_and_defining.html [astropy.units.core")
-
-                        #find brightest stars in the center of the observation frame
-                        obs_bright_stars = up.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
-                        
-                        #remove stars that do not match between frames
-                        ref_bright_stars, obs_bright_stars = up.remove_separate_stars(ref_bright_stars, obs_bright_stars)
+                    #find brightest stars in the center of the observation frame
+                    obs_bright_stars = up.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
+                    
+                    #remove stars that do not match between frames
+                    ref_bright_stars, obs_bright_stars = up.remove_separate_stars(ref_bright_stars, obs_bright_stars)
                     
                     #create ds9 .reg files for reference and observation images
                     up.create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=obs_directory)
