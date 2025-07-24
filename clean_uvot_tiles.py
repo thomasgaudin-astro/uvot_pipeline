@@ -212,7 +212,7 @@ while run_pipeline == True:
                 subpath = os.path.join(ref_frame, filepath)
                 sourcepath_fill = 'uvot/image/detect.fits'
                 full_sourcepath = os.path.join(subpath, sourcepath_fill)
-
+                print(full_sourcepath)
                 detect_frame_exists = os.path.exists(full_sourcepath)
                 counter = 0
                 print(detect_frame_exists, ref_frame)
@@ -225,7 +225,7 @@ while run_pipeline == True:
                     new_subpath = os.path.join(new_ref_frame, filepath)
                     new_sourcepath_fill = 'uvot/image/detect.fits'
                     new_full_sourcepath = os.path.join(new_subpath, new_sourcepath_fill)
-
+                    print(new_full_sourcepath)
                     detect_frame_exists = os.path.exists(new_full_sourcepath)
                     print(detect_frame_exists, new_ref_frame)
                     
