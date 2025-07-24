@@ -44,5 +44,5 @@ closest_tile = minimized_tiles.loc[0, 'Tile Name']
 print(f'The Closest Tile is: {closest_tile}')
 print(f'Distance to Closest Tile is: {min_dist} deg')
 
-if min_dist >= 0.15 * u.deg:    
+if min_dist >= 0.15:    
     print('WARNING. Target is near the edge of the Closest Tile or off the frame. Light curve may be sparse.')
