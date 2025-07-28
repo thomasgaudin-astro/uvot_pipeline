@@ -27,6 +27,6 @@ ax.errorbar(test_data[0], test_data[1], yerr=test_data[2], lw=1, capsize=2, fmt=
 
 ax.invert_yaxis()
 
-plt.savefig(f'{args.source_name}_uvot_lc.pdf', bbox_inches='tight')
+plt.savefig(f'./UVOT_plots/{args.source_name}_uvot_lc.pdf', bbox_inches='tight')
 
 print(f'Process complete. File will be in the UVOT plots folder under the name {args.source_name}_uvot_lc.pdf')
