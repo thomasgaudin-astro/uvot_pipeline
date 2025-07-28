@@ -10,9 +10,13 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+import argparse
+
 mpl.rcParams['pdf.fonttype'] = 42
 mpl.rcParams['ps.fonttype'] = 42
 mpl.rcParams['font.family'] = 'Serif'
+
+parser = argparse.ArgumentParser(description='Options for Plot UVOT Light Curve Script.')
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which uvot file to plot as a light curve.")
 
