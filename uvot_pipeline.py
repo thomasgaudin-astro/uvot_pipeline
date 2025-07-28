@@ -18,6 +18,8 @@ from astropy.coordinates import SkyCoord
 
 from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
 
+from tqdm import tqdm
+
 def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
@@ -243,7 +245,7 @@ def detect_smeared_frames(tile_name):
 
     smeared = []
     
-    for path in os.listdir(filepath):
+    for path in tqdm(os.listdir(filepath)):
         if path == '.DS_Store':
             continue
         else:
@@ -308,7 +310,7 @@ def check_aspect_correction(filepath):
 
     aspect_uncorrected = []
 
-    for path in sorted(os.listdir(filepath)):
+    for path in tqdm(sorted(os.listdir(filepath))):
         if path == '.DS_Store':
             continue
         else:
@@ -340,7 +342,7 @@ def check_aspect_correction_verbose(filepath):
 
     aspect_uncorrected = []
 
-    for path in sorted(os.listdir(filepath)):
+    for path in tqdm(sorted(os.listdir(filepath))):
         if path == '.DS_Store':
             continue
         else:
@@ -372,7 +374,7 @@ def check_direct_corrections(filepath):
 
     aspect_direct = []
 
-    for path in sorted(os.listdir(filepath)):
+    for path in tqdm(sorted(os.listdir(filepath))):
         if path == '.DS_Store':
             continue
         else:
@@ -402,7 +404,7 @@ def check_direct_corrections_verbose(filepath):
 
     aspect_direct = []
 
-    for path in sorted(os.listdir(filepath)):
+    for path in tqdm(sorted(os.listdir(filepath))):
         if path == '.DS_Store':
             continue
         else:
@@ -430,7 +432,7 @@ def check_direct_corrections_verbose(filepath):
 
 def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tiles):
 
-    for auct in aspect_uncorrected_tiles:
+    for auct in tqdm(aspect_uncorrected_tiles):
     
         source = os.path.join(in_filepath, auct)
         destination = out_filepath+'AspectNone'
