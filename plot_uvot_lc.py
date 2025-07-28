@@ -7,6 +7,7 @@ Created on Mon Jul 28 12:10:00 2025
 """
 
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 mpl.rcParams['pdf.fonttype'] = 42
