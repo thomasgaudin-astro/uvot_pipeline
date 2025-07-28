@@ -20,6 +20,8 @@ parser = argparse.ArgumentParser(description='Options for Plot UVOT Light Curve 
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which uvot file to plot as a light curve.")
 
+args = parser.parse_args()
+
 print('Welcome to the UVOT Light Curve Plotter.')
 print(f'Plotting a light curve for the source {args.source_name}.\n')
 
