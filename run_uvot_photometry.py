@@ -182,7 +182,7 @@ print('All runs of uvotdetect are now complete.\n')
 
 print('Generating better region files.')
 #loop through all filepaths and generate new source region files if detect.fits exists
-for obs in all_target_filepaths:
+for obs in tqdm(all_target_filepaths):
 
     detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/detect.fits'
     if os.path.exists(detect_path) == True:
@@ -220,7 +220,7 @@ print("Grabbing Data for Output.")
 source_data = pd.DataFrame()
 
 # Loop through all filepaths and grab fits data from photometry source.fits output
-for obs in all_target_filepaths:
+for obs in tqdm(all_target_filepaths):
 
     filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
 
@@ -289,7 +289,7 @@ print(f'Outputting new file: {args.source_name}_uvot_data.txt')
 print("\nDeleting unnecessary files.")
 
 #loop through all filepaths and remove source.fits & source.reg files
-for obs in all_target_filepaths:
+for obs in tqdm(all_target_filepaths):
 
     #file names
     source_fitsfile = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
