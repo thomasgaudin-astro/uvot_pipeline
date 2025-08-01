@@ -218,7 +218,7 @@ def check_for_undownloaded_files(tile_name, new_tile_name, tile_ra, tile_dec):
     #only check observations where file name is desired S-CUBED tile
     #if directory doesn't exist for observation, append to undownloaded files  
     for ind, q in enumerate(query):
-        if q.targname == new_tile_name:
+        if (q.targname == new_tile_name) & (q.exposure.total_seconds() > 30):
             obsid = query[ind].obsid
             dirpath = f'./S-CUBED/{tile_name}/UVOT/{obsid}'
             smeared_dirpath = f'./S-CUBED/{tile_name}/Smeared/{obsid}'
