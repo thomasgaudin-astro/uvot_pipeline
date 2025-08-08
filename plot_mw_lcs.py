@@ -94,7 +94,7 @@ while prompt_xrt == True:
                 try:
                     print("Downloading Data.")
                     up.download_xrt_data(xrt_num, args.source_name)
-                    ogle_dl_prompt = False
+                    xrt_dl_prompt = False
                     print("Download Successful.")
                 except up.DownloadError:
                     print("An Error occurred when downloading the file. Please check the name of the XRT Source and try again.")
