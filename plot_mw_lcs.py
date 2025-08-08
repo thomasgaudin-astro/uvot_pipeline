@@ -39,14 +39,14 @@ ogle_dl_prompt = True
 
 while prompt_ogle == True:
 
-    ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N]')
+    ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N] ')
 
     if ogle.upper == "Y":
 
         ogle_name = input("Please provide the OGLE IV name of the source: ")
 
         while ogle_dl_prompt == True:
-            download = input(f'Do you wish to download the newest version of the OGLE IV Light Curve for this source before plotting? [Y/N]')
+            download = input(f'Do you wish to download the newest version of the OGLE IV Light Curve for this source before plotting? [Y/N] ')
             
             if download.upper == "Y":
 
