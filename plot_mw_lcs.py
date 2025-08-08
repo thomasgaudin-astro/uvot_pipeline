@@ -44,14 +44,14 @@ while prompt_ogle == True:
     print(ogle.upper)
     print(type(ogle))
 
-    if ogle.upper == "Y":
+    if ogle.upper() == "Y":
 
         ogle_name = input("Please provide the OGLE IV name of the source: ")
 
         while ogle_dl_prompt == True:
             download = input(f'Do you wish to download the newest version of the OGLE IV Light Curve for this source before plotting? [Y/N] ')
             
-            if download.upper == "Y":
+            if download.upper() == "Y":
 
                 try:
                     print("Downloading Data.")
@@ -61,14 +61,14 @@ while prompt_ogle == True:
                 except up.DownloadError:
                     print("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
 
-            elif download.upper == "N":
+            elif download.upper() == "N":
                 ogle_dl_prompt = False
             else:
                 print("Please pick a valid option [Y/N]")
         
         prompt_ogle = False
 
-    elif ogle.upper == "N":
+    elif ogle.upper() == "N":
         is_ogle = False
         prompt_ogle = False
     else:
@@ -82,14 +82,14 @@ while prompt_xrt == True:
 
     xrt = input(f'Is there a S-CUBED XRT Source associated with this UV source? [Y/N]')
 
-    if xrt.upper == "Y":
+    if xrt.upper() == "Y":
 
         xrt_num = input("Please provide the S-CUBED Number of the source: ")
 
         while xrt_dl_prompt == True:
             download_xrt = input(f'Do you wish to download the newest version of the XRT Light Curve for this source before plotting? [Y/N]')
             
-            if download_xrt.upper == "Y":
+            if download_xrt.upper() == "Y":
 
                 try:
                     print("Downloading Data.")
@@ -99,14 +99,14 @@ while prompt_xrt == True:
                 except up.DownloadError:
                     print("An Error occurred when downloading the file. Please check the name of the XRT Source and try again.")
 
-            elif download_xrt.upper == "N":
+            elif download_xrt.upper() == "N":
                 xrt_dl_prompt = False
             else:
                 print("Please pick a valid option [Y/N]")
         
         prompt_xrt = False
 
-    elif xrt.upper == "N":
+    elif xrt.upper() == "N":
         is_xrt = False
         prompt_xrt = False
     else:
