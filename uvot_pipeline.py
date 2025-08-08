@@ -20,6 +20,13 @@ from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
 
 from tqdm import tqdm
 
+import requests
+from requests.auth import HTTPBasicAuth
+
+class DownloadError(Exception):
+    """Raise when requests status quo does not return 200."""
+    pass
+
 def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
@@ -648,4 +655,17 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
     
         with open(reg_filename, mode='w', encoding='utf-8') as regfile:
             regfile.write(new_reg_text)
-            
+
+def download_ogle_data(ogle_name, source_name):
+
+    ogle = requests.get(f'https://www.astrouw.edu.pl/ogle/ogle4/xrom/{ogle_name}/phot.dat')
+
+    if ogle.status_code != 200:
+        raise DownloadError("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
+
+    ogle_local_filename = f"./OGLE_Outputs/{source_name}.dat"
+    with open(ogle_local_filename, 'wb') as f:
+        for chunk in ogle.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    
