@@ -24,7 +24,7 @@ def plot_uvot_lc(source_name, uvot_data):
 
     plt.savefig(f'./Plots/UVOT_plots/{source_name}_uvot_lc.pdf', bbox_inches='tight')
 
-def plot_ogle_lc(source_name, uvot_data):
+def plot_ogle_lc(source_name, ogle_data):
 
     fig, ax = plt.subplots(figsize=(10,7), facecolor='white')
 
