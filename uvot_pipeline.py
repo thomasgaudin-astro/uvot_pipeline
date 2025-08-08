@@ -679,5 +679,13 @@ def download_xrt_data(xrt_num, source_name):
         with open(xrt_local_filename, 'wb') as f:
             for chunk in xrt.iter_content(chunk_size=8192):
                 f.write(chunk)
+
+def read_ogle_data(source_name):
+
+    ogle_data = pd.read_csv(f'./OGLE_Outputs/{source_name}.dat', sep=r'\s+', header=None, names=['Time', 'I', 'I_Err', 'Seeing', 'Sky'])
+    
+    ogle_data['MJD'] = ogle_data['Time'] - 2400000
+
+    return ogle_data
     
     
