@@ -41,6 +41,9 @@ while prompt_ogle == True:
 
     ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N] ')
 
+    print(ogle)
+    print(type(ogle))
+
     if ogle.upper == "Y":
 
         ogle_name = input("Please provide the OGLE IV name of the source: ")
