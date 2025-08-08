@@ -127,7 +127,7 @@ def plot_xrt_lc_ul(source_name, xrt_data, xrt_ul_data, ymin=0):
 
     plt.savefig(f'./Plots/XRT_plots/{source_name}_xrt_lc.pdf', bbox_inches="tight")
 
-def plot_uvot_xrt_lc_ul(source_name, xrt_data, xrt_ul_data, ymin=0):
+def plot_uvot_xrt_lc_ul(source_name, uvot_data, xrt_data, xrt_ul_data, ymin=0):
     
     max_ul_val = max(xrt_ul_data['CR'])
 
