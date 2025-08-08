@@ -699,6 +699,9 @@ def read_xrt_data(source_name):
     xrt_data = Table.read(f"./XRT_Outputs/{source_name}.qdp", format='ascii.qdp', table_id=0, names=['MJD', 'CR'])
     xrt_ul_data = Table.read(f"./XRT_Outputs/{source_name}.qdp", format='ascii.qdp', table_id=1, names=['MJD', 'CR'])
 
+    xrt_data['MJD_nerr'] = -1*xrt_data['MJD_nerr']
+    xrt_data['CR_nerr'] = -1*xrt_data['CR_nerr']
+
     return xrt_data, xrt_ul_data
 
 
