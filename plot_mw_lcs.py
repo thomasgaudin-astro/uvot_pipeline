@@ -81,7 +81,7 @@ while prompt_xrt == True:
 
     if xrt.upper == "Y":
 
-         xrt_num = input("Please provide the S-CUBED Number of the source: ")
+        xrt_num = input("Please provide the S-CUBED Number of the source: ")
 
         while xrt_dl_prompt == True:
             download_xrt = input(f'Do you wish to download the newest version of the XRT Light Curve for this source before plotting? [Y/N]')
