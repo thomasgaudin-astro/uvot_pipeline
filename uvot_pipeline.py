@@ -694,6 +694,13 @@ def read_uvot_data(source_name):
 
     return uvot_data
 
-def read_xrt_data(source_name)
+def read_xrt_data(source_name):
+
+    xrt_data = Table.read(f"./XRT_Outputs/{source_name}.qdp", format='ascii.qdp', table_id=0, names=['MJD', 'CR'])
+    xrt_ul_data = Table.read(f"./XRT_Outputs/{source_name}.qdp", format='ascii.qdp', table_id=1, names=['MJD', 'CR'])
+
+    return xrt_data, xrt_ul_data
+
+
     
     
