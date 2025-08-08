@@ -65,6 +65,31 @@ def plot_ogle_uvot_lc(source_name, ogle_data, uvot_data):
 
     plt.savefig(f'./Plots/OGLE_UVOT_plots/{source_name}_ogle_uvot_lc.pdf', bbox_inches='tight')
 
+def plot_trunc_ogle_uvot_lc(source_name, truncated_ogle_data, uvot_data):
+
+    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white')
+
+    ax[0].scatter(truncated_ogle_data['MJD'], truncated_ogle_data['Mag'], marker='D', s=20, c='k', zorder=5)
+    ax[0].errorbar(truncated_ogle_data['MJD'], truncated_ogle_data['Mag'], yerr=truncated_ogle_data['Mag_Err'], lw=1, capsize=2, fmt='none', c='k')
+
+    ax[0].invert_yaxis()
+
+    ax[0].set_ylabel('I-band Mag', fontsize=14)
+    ax[0].set_xlabel('MJD', fontsize=14)
+    ax[0].set_title(f'{source_name}', fontsize=16)
+    ax[0].tick_params(labelsize=14)
+
+    ax[1].scatter(uvot_data['MJD'], uvot_data['Mag'], marker='D', s=20, c='k', zorder=5)
+    ax[1].errorbar(uvot_data['MJD'], uvot_data['Mag'], yerr=uvot_data['Mag_Err'], lw=1, capsize=2, fmt='none', c='r')
+
+    ax[1].invert_yaxis()
+
+    ax[1].set_ylabel('UVW1-band Mag', fontsize=14)
+    ax[1].set_xlabel('MJD', fontsize=14)
+    ax[1].tick_params(labelsize=14)
+
+    plt.savefig(f'./Plots/Trunc_OGLE_UVOT_plots/{source_name}_trunc_ogle_uvot_lc.pdf', bbox_inches='tight')
+
 def plot_xrt_lc_ul(source_name, xrt_data, xrt_ul_data, ymin=0):
     
     max_ul_val = max(xrt_ul_data['CR'])
