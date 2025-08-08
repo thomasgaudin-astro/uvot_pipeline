@@ -29,7 +29,7 @@ def plot_ogle_lc(source_name, ogle_data):
     fig, ax = plt.subplots(figsize=(10,7), facecolor='white')
 
     ax.scatter(ogle_data['MJD'], ogle_data['I'], marker='D', s=20, c='k', zorder=5)
-    ax.errorbar(ogle_data['MJD'], ogle_data['I'], yerr=ogle_data['IO_Err'], lw=1, capsize=2, fmt='none', c='k')
+    ax.errorbar(ogle_data['MJD'], ogle_data['I'], yerr=ogle_data['I_Err'], lw=1, capsize=2, fmt='none', c='k')
 
     ax.invert_yaxis()
 
