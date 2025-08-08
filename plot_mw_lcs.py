@@ -116,12 +116,12 @@ print('Grabbing data for source.\n')
 
 if is_ogle == True:
 
-    ogle_data = up.read_ogle_data(ogle_name, args.source_name)
+    ogle_data = up.read_ogle_data(args.source_name)
     truncated_ogle_data = ogle_data[ogle_data['MJD'] >= 57563]
 
 if is_xrt == True:
 
-    xrt_data, xrt_ul_data = up.read_xrt_data(xrt_num, args.source_name)
+    xrt_data, xrt_ul_data = up.read_xrt_data(args.source_name)
 
 uvot_data = up.read_uvot_data(args.source_name)
 
