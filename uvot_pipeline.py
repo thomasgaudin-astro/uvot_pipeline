@@ -662,10 +662,22 @@ def download_ogle_data(ogle_name, source_name):
 
     if ogle.status_code != 200:
         raise DownloadError("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
+    else:
+        ogle_local_filename = f"./OGLE_Outputs/{source_name}.dat"
+        with open(ogle_local_filename, 'wb') as f:
+            for chunk in ogle.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-    ogle_local_filename = f"./OGLE_Outputs/{source_name}.dat"
-    with open(ogle_local_filename, 'wb') as f:
-        for chunk in ogle.iter_content(chunk_size=8192):
-            f.write(chunk)
+def download_xrt_data(xrt_num, source_name):
 
+    xrt = requests.get(f'https://www.swift.ac.uk/SMC/data/source{xrt_num}/curve/PC_incbad.qdp', auth=HTTPBasicAuth('smc', 'T1le_th3_$MC'))
+
+    if xrt.status_code != 200:
+        raise DownloadError("An Error occurred when downloading the file. Please check the number of the XRT Source and try again.")
+    else:
+        xrt_local_filename = f"./XRT_Outputs/{source_name}.qdp"
+        with open(xrt_local_filename, 'wb') as f:
+            for chunk in xrt.iter_content(chunk_size=8192):
+                f.write(chunk)
+    
     
