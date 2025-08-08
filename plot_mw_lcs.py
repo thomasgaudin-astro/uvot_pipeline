@@ -41,9 +41,6 @@ while prompt_ogle == True:
 
     ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N] ')
 
-    print(ogle.upper)
-    print(type(ogle))
-
     if ogle.upper() == "Y":
 
         ogle_name = input("Please provide the OGLE IV name of the source: ")
@@ -118,8 +115,6 @@ if is_ogle == True:
 
     ogle_data = up.read_ogle_data(args.source_name)
     truncated_ogle_data = ogle_data[ogle_data['MJD'] >= 57563]
-
-    print(ogle_data)
 
 if is_xrt == True:
 
