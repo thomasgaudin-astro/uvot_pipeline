@@ -12,7 +12,7 @@ import re
 import shutil
 
 from astropy.io import fits
-from astropy.table import QTable
+from astropy.table import QTable, Table
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
