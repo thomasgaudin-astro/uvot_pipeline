@@ -42,6 +42,6 @@ ax.set_ylabel('UVW1-band Mag', fontsize=14)
 ax.set_xlabel('MJD', fontsize=14)
 ax.tick_params(labelsize=14)
 
-plt.savefig(f'./UVOT_plots/{args.source_name}_uvot_lc.pdf', bbox_inches='tight')
+plt.savefig(f'./Plots/UVOT_plots/{args.source_name}_uvot_lc.pdf', bbox_inches='tight')
 
 print(f'Process complete. File will be in the UVOT plots folder under the name {args.source_name}_uvot_lc.pdf')
