@@ -42,7 +42,7 @@ def plot_ogle_lc(source_name, ogle_data):
 
 def plot_ogle_uvot_lc(source_name, ogle_data, uvot_data):
 
-    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white')
+    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white', sharex=True)
 
     fig.subplots_adjust(hspace=0)
 
@@ -69,7 +69,7 @@ def plot_ogle_uvot_lc(source_name, ogle_data, uvot_data):
 
 def plot_trunc_ogle_uvot_lc(source_name, truncated_ogle_data, uvot_data):
 
-    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white')
+    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white', sharex=True)
 
     fig.subplots_adjust(hspace=0)
 
@@ -136,7 +136,7 @@ def plot_uvot_xrt_lc_ul(source_name, uvot_data, xrt_data, xrt_ul_data, ymin=0):
 
     max_val = max(max_ul_val, max_xrt_val)
 
-    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white')
+    fig, ax = plt.subplots(2, 1, figsize=(10,7), facecolor='white', sharex=True)
 
     fig.subplots_adjust(hspace=0)
 
@@ -178,7 +178,7 @@ def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul
 
     max_val = max(max_ul_val, max_xrt_val)
 
-    fig, ax = plt.subplots(3, 1, figsize=(15,7), facecolor='white')
+    fig, ax = plt.subplots(3, 1, figsize=(15,7), facecolor='white', sharex=True)
 
     fig.subplots_adjust(hspace=0)
 
@@ -229,7 +229,7 @@ def plot_trunc_ogle_uvot_xrt_lc_ul(source_name, truncated_ogle_data, uvot_data, 
 
     max_val = max(max_ul_val, max_xrt_val)
 
-    fig, ax = plt.subplots(3, 1, figsize=(15,7), facecolor='white')
+    fig, ax = plt.subplots(3, 1, figsize=(15,7), facecolor='white', sharex=True)
 
     fig.subplots_adjust(hspace=0)
 
