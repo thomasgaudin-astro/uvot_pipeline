@@ -266,7 +266,7 @@ def plot_trunc_ogle_uvot_xrt_lc_ul(source_name, truncated_ogle_data, uvot_data, 
 
     ax[2].set_ylabel('XRT Count Rate (counts/s)', fontsize=14)
     ax[2].set_ylim(min_xrt_val-0.03, max_val+0.03)
-    ax[2].set_xlabel('MJD', fontsize=16)
+    ax[2].set_xlabel('MJD', fontsize=14)
     ax[2].tick_params(labelsize=14)
 
     plt.savefig(f'./Plots/Trunc_OGLE_UVOT_XRT_plots/{source_name}_trunc_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
