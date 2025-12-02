@@ -172,13 +172,13 @@ def run_uvotunicorr_verbose(uvotunicorr_command):
 
 def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None):
     
-    infile_path = f'./{source_name}/TOO/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
+    infile_path = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
 
     if file_type == 'sk':
-        outfile_path = f'./{source_name}/TOO/uvot/image/{band}_summed.fits'
+        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
     
     if file_type == 'ex':
-        outfile_path = f'./{source_name}/TOO/uvot/image/{band}_ex_summed.fits'
+        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
     
     if exclude == None:
         bash_command = f"""
