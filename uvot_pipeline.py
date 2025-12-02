@@ -189,8 +189,8 @@ def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_fi
 def create_uvotsource_too_bash_command(source_name, obsid, band, snapshot, source_reg_file, bkg_reg_file):
 
     trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
-    obs_filepath = f'./{source_name}/UVOT/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
-    exp_filepath  = f'./{source_name}/UVOT/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
+    obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
+    exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
     
     bash_command = f"""
         bash -c '
