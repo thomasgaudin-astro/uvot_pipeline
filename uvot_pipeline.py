@@ -197,6 +197,34 @@ def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclu
 
     return bash_command
 
+def run_uvotimsum(uvotimsum_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotimsum_command],
+        capture_output=True,
+        text=True
+    )
+
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
+def run_uvotimsum_verbose(uvotimsum_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotimsum_command],
+        capture_output=True,
+        text=True
+    )
+
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
 def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
 
     trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
