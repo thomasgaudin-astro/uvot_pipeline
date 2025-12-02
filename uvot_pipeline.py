@@ -170,6 +170,33 @@ def run_uvotunicorr_verbose(uvotunicorr_command):
 
     return result.stdout
 
+def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None):
+    
+    infile_path = f'./{source_name}/TOO/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
+
+    if file_type == 'sk':
+        outfile_path = f'./{source_name}/TOO/uvot/image/{band}_summed.fits'
+    
+    if file_type == 'ex':
+        outfile_path = f'./{source_name}/TOO/uvot/image/{band}_ex_summed.fits'
+    
+    if exclude == None:
+        bash_command = f"""
+            bash -c '
+            source {os.environ['HEADAS']}/headas-init.sh
+            uvotimsum infile="{infile_path}" outfile="{outfile_path}"
+            '
+            """
+    else:
+        bash_command = f"""
+            bash -c '
+            source {os.environ['HEADAS']}/headas-init.sh
+            uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude={exclude}
+            '
+            """
+
+    return bash_command
+
 def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
 
     trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
