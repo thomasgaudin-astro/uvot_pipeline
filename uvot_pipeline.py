@@ -191,14 +191,24 @@ def create_uvotsource_too_bash_command(source_name, obsid, band, snapshot, sourc
     trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
     obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
     exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
-    
-    bash_command = f"""
-        bash -c '
-        source {os.environ['HEADAS']}/headas-init.sh
-        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source{snapshot}.fits" cleanup=YES clobber=YES chatter=1
 
-        '
-        """
+    if snapshot == 1:
+    
+        bash_command = f"""
+            bash -c '
+            source {os.environ['HEADAS']}/headas-init.sh
+            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
+
+            '
+            """
+    else:
+        bash_command = f"""
+            bash -c '
+            source {os.environ['HEADAS']}/headas-init.sh
+            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source{snapshot}.fits" cleanup=YES clobber=YES chatter=1
+
+            '
+            """
 
     return bash_command
 
