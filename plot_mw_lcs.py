@@ -147,6 +147,7 @@ if is_xrt == True:
 
 if (is_ogle == True) & (is_xrt == True):
 
+    sc_plots.plot_ogle_xrt_lc_ul(args.source_name, ogle_data, xrt_data, xrt_ul_data, ymin=0)
     sc_plots.plot_ogle_uvot_xrt_lc_ul(args.source_name, ogle_data, uvot_data, xrt_data, xrt_ul_data, ymin=0)
     sc_plots.plot_trunc_ogle_uvot_xrt_lc_ul(args.source_name, truncated_ogle_data, uvot_data, xrt_data, xrt_ul_data, ymin=0)
 
