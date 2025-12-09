@@ -142,6 +142,28 @@ def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     return bash_command
 
+def create_uvotunicorr_too_bash_command(ref_frame, obs_frame, band, snapshot, obspath=None):
+
+    if obspath:
+        ref_filepath = obspath+f'/sw{ref_frame}{band}_sk.img[{snapshot}]'
+        obs_filepath = obspath+f'/sw{obs_frame}{band}_sk.img[{snapshot}]'
+        ref_reg_filepath = obspath+'/ref.reg'
+        obs_reg_filepath = obspath+'/obs.reg'
+    else:
+        ref_filepath = f'sw{ref_frame}{band}_sk.img[{snapshot}]'
+        obs_filepath = f'sw{obs_frame}{band}_sk.img[{snapshot}]'
+        ref_reg_filepath = 'ref.reg'
+        obs_reg_filepath = 'obs.reg'
+    
+    bash_command = f"""
+        bash -c '
+        source {os.environ['HEADAS']}/headas-init.sh
+        uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
+        '
+        """
+
+    return bash_command
+
 def run_uvotunicorr(uvotunicorr_command):
 
     # Run the command
