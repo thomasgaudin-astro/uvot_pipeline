@@ -12,7 +12,7 @@ import re
 import shutil
 
 from astropy.io import fits
-import astropy.wcs import WCS, FITSFixedWarning
+from astropy.wcs import WCS, FITSFixedWarning
 from astropy.table import QTable, Table
 import astropy.units as u
 from astropy.coordinates import SkyCoord
