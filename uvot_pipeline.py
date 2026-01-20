@@ -77,7 +77,21 @@ def run_uvotdetect_verbose(uvotdetect_command):
     print("STDERR:\n", result.stderr)
 
     return result.stdout
-    
+
+
+
+def run_wsl_command(uvotdetect_command):
+    full_cmd = f"conda activate henv && {command}"
+    result = subprocess.run(
+        ["wsl", "bash", "-ic", full_cmd],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        print(f"Command failed:\n{result.stderr.strip()}")
+    return result
+
+
 def create_fkeyprint_bash_command(source_path):
 
     fits_path = os.path.abspath(source_path)
