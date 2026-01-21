@@ -828,6 +828,35 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
             with open(reg_filename, mode='w', encoding='utf-8') as regfile:
                 regfile.write(new_reg_text)
 
+def create_master_ref_file(source_name, band, ref_files, group_name):
+    """
+    Takes uvot reference frames and sums them together. 
+    INPUT:
+        ref_files (list): list of obsids of the relevant reference files.
+    """
+
+    #sum first file
+    primary_file = ref_files[0]
+    primary_imsum_command = up.create_uvotimsum_too_bash_command(source_name, primary_file, band, 'sk', ref_frame=True)
+
+    up.run_uvotimsum(primary_imsum_command)
+    os.rename(f'./{source_name}/Ref_Frames/{primary_file}_{band}_summed.fits', 
+              f'./{source_name}/Ref_Frames/{group_name}_summed.fits')
+
+    for ref_id in ref_files[1:]:
+        imsum_command = up.create_uvotimsum_too_bash_command(source_name, ref_id, band, 'sk', ref_frame=True)
+        up.run_uvotimsum(imsum_command)
+
+        outfilename = f'./{source_name}/Ref_Frames/{ref_id}_{band}_summed.fits'
+
+        fappend_command = create_fappend_bash_command(outfilename, 
+                                                      f'./{source_name}/Ref_Frames/{group_name}_summed.fits')
+        run_fappend(fappend_command)
+
+    
+    mastersum_command = create_uvotimsum_master_ref_bash_command(source_name, group_name)
+    up.run_uvotimsum(mastersum_command)
+
 def download_ogle_data(ogle_name, source_name):
 
     ogle = requests.get(f'https://www.astrouw.edu.pl/ogle/ogle4/xrom/{ogle_name}/phot.dat')
