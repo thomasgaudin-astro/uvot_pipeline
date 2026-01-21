@@ -257,6 +257,20 @@ def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclu
 
     return bash_command
 
+def create_uvotimsum_master_ref_bash_command(source_name, group_name):
+
+    infile_path = f'./{source_name}/Ref_Frames/{group_name}_summed.fits'
+    outfile_path = f'./{source_name}/Ref_Frames/{group_name}_master.fits'
+
+    bash_command = f"""
+            bash -c '
+            source {os.environ['HEADAS']}/headas-init.sh
+            uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude=0
+            '
+            """
+
+    return bash_command
+
 def run_uvotimsum(uvotimsum_command):
 
     # Run the command
