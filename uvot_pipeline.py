@@ -120,6 +120,15 @@ def run_fkeyprint_verbose(fkeyprint_command):
 
     return result.stdout
 
+def create_fappend_bash_command(file1_name, file2_name):
+
+    command = f"""
+    source {os.environ['HEADAS']}/headas-init.sh
+    fappend {file1_name} {file2_name}
+    """
+
+    return command
+
 def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     if obspath:
