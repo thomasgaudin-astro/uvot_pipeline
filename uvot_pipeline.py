@@ -129,6 +129,32 @@ def create_fappend_bash_command(file1_name, file2_name):
 
     return command
 
+def run_fappend(fappend_command):
+
+    result = subprocess.run(
+        ['bash', '-i', '-c', fappend_command],
+        capture_output=True,
+        text=True
+    )
+    
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
+def run_fappend_verbose(fappend_command):
+
+    result = subprocess.run(
+        ['bash', '-i', '-c', fappend_command],
+        capture_output=True,
+        text=True
+    )
+    
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
 def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     if obspath:
