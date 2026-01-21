@@ -192,15 +192,18 @@ def run_uvotunicorr_verbose(uvotunicorr_command):
 
     return result.stdout
 
-def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None):
+def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None, ref_frame=False):
     
     infile_path = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
 
-    if file_type == 'sk':
-        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
-    
-    if file_type == 'ex':
-        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
+    if ref_frame == True:
+        outfile_path = f'./{source_name}/Ref_Frames/{obsid}_{band}_summed.fits'
+    else:
+        if file_type == 'sk':
+            outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
+        
+        elif file_type == 'ex':
+            outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
     
     if exclude == None:
         bash_command = f"""
