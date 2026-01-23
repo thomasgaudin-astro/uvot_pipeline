@@ -906,5 +906,192 @@ def read_xrt_data(source_name):
     return xrt_data, xrt_ul_data
 
 
+    #Start of IAC
+# This function is fixing a major problem I am haveing, "PermissionError" I.E. a file already exists with the same name causing it to crash.
+# Made it a Def as it may comeup again and be used again.
+def _get_unique_filename(base_path):
+    #If a File like 'Summery.csv' is locked or exists this function will automatically find the next free name which is typically 'Summery1.csv' or such
+    #If of course the files doesnt exist yet, we just use the base name.
+    if not os.path.exists(base_path):
+        return base_path
+    # Spliting the path into parts : "C"/Folder/file" and ".csv", This is actually something I didnt know how to do how it works and why is
+    # We cant just do : Path = Basepath + _1 or the like because that would make Summery.csv_1 which is bad, so we have to split it so we can insert the number bofore the extension I.E. "C"/Folder/file" + _1 + ".csv" aint that neat. 
+    directory, filename = os.path.split(base_path)
+    name, ext = os.path.splitext(filename)
     
+    counter = 1
+    while True:
+        new_name = f"{name}_{counter}{ext}"
+        new_path = os.path.join(directory, new_name) # Check if file exists; if not, return this name
+        if not os.path.exists(new_path):
+            return new_path
+        try: # If it exists, try to see if it's writable (not locked by Excel, I.E. have it currenty open) 
+            with open(new_path, 'a'): # Test if file is locked
+                return new_path
+        except IOError:
+            counter += 1 # If it still errors at the end add to the counter and try again, maybe +1 already existed. If of course thats not the problem this will go on forever.
+
+
+# -------------------- The hunt for Red ASPCORR -----------------------------
+# This has given me some pause for some time as what I did in the past was a very basic bit of code that used existing fkeyprint code and read the extension
+# That on hindsight didnt work to well for two reasons, 1: I was only reading the first extension and not the whole list(whops) 2: Meant that code only worked for WSL, this needs to be universal.
+
+#So what we now do instead is a scan the FITS file itself for the extension and read the proper sheet. I.E. the fits files themselves have extension as the photos do so they may have-- Sheet 0 (Primary) Sheet 1(Image) Sheet 2(Image), etc.
+# So we will have to Loop through all sheets for our hunt
+def _scan_header_for_aspcorr(file_path):
+    """
+    Scans for mixed DIRECT and NONE statuses.
+    If both exist, it is a 'READYRESUM' (needs fix + re-summing).
+    """
+    if not file_path: return "NONE"
+    try:
+        with fits.open(file_path) as hdul:
+            # We use a set to get only unique statuses across all sheets (extensions)
+            statuses = set()
+            for hdu in hdul:
+                val = hdu.header.get('ASPCORR', 'NONE')
+                statuses.add(str(val).strip().upper())
+            
+            # --- THE READYRESUM LOGIC ---
+            # If it has some good and some bad, it's Ready to be fixed then Re-Summed.
+            if 'DIRECT' in statuses and 'NONE' in statuses:
+                return 'READYRESUM'
+            if 'NONE' in statuses: 
+                return 'NONE'
+            if 'DIRECT' in statuses: 
+                return 'DIRECT'
+            return "NONE"
+    except:
+        return "NONE"
+
+# Essentially the same as above,we are grabing the RA/DEC from the image header. The only funny little thing about this is NAXIS
+# A bit of a problem you may run into if you make a few misteps is not all FITS extensions are images, we need to find which ones are. The best way I would find is to look for NAXIS I.E. does the file have Height and Width.
+def _get_coords(file_path):
+    if not file_path: return None, None
+    try:
+        with fits.open(file_path) as hdul:
+            for hdu in hdul:
+                if hdu.header.get('NAXIS', 0) >= 2: #Asking if two NAXIS or more exist in the files, I.E. high and width for a 2d img. Typically called NAXIS1, NAXIS2. if you looked in the file you would find something lik NAXIS=2, NAXIS1=500, NAXIS2=400. or the like.
+                    w = WCS(hdu.header) # Thought this would be more important then it was, could get rid of this and change bellow rather easily but eh.
+                    cx, cy = hdu.header['NAXIS1']/2.0, hdu.header['NAXIS2']/2.0 #Of course since we know the Width and Height thanks to NAXIS just /2 to get the center of the IMG. In pixels typically.
+                    ra, dec = w.all_pix2world(cx, cy, 0) #Convert that pixel data into celestial coordinates
+                    return float(ra), float(dec)
+            return None, None
+    except:
+        return None, None
+
+
+# The Engine of the operation
+def _run_core_engine(base_folder=None, save_dir=None):
+    if not base_folder:
+        base_folder = os.path.normpath(input("1. Path to UVOT raw data: ").strip().strip('"').strip("'"))
+    if not save_dir:
+        save_dir = os.path.normpath(input("2. Save directory: ").strip().strip('"').strip("'"))
+    
+    if not os.path.exists(save_dir): os.makedirs(save_dir)
+
+    bands_list = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+    raw_results = []
+    
+    try:
+        top_folders = [f for f in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, f))] # Filter to get only Directories. 
+    except Exception as e: 
+        print(f"Error: {e}"); return None, None, None
+
+    folder_pattern = re.compile(r"(\d{11})")
+
+    for folder in top_folders:
+        match = folder_pattern.search(folder)
+        if not match: continue
+        obsid = match.group(1).zfill(11) 
+        
+        band_files = {b: {'sum': None, 'sky': None} for b in bands_list}
+
+        for root, _, filenames in os.walk(os.path.join(base_folder, folder)): 
+            for f in filenames:
+                f_low = f.lower()
+                if not any(ext in f_low for ext in ['.img', '.fits', '.gz']): continue
+                for band in bands_list:
+                    if band in f_low:
+                        if "summed" in f_low: 
+                            band_files[band]['sum'] = os.path.join(root, f) 
+                        elif "_sk" in f_low: 
+                            band_files[band]['sky'] = os.path.join(root, f)
+
+        for band, files in band_files.items():
+            sum_f, sky_f = files['sum'], files['sky']
+            if not sum_f and not sky_f: continue
+            
+            target_file = sum_f if sum_f else sky_f  
+            status_source_file = sky_f if sky_f else sum_f 
+
+            ra, dec = _get_coords(target_file) 
+            if ra is None: continue 
+            
+            raw_results.append({
+                "OBSID": obsid, "Band": band, "RA": ra, "Dec": dec,
+                "Full_Path": target_file, 
+                "Filename": os.path.basename(target_file),
+                "ASPCORR": _scan_header_for_aspcorr(status_source_file)
+            })
+
+    df = pd.DataFrame(raw_results)
+    if df.empty: return None, None, None
+    df = df.drop_duplicates(subset=['OBSID', 'Band'], keep='first')
+
+    # --- SPATIAL GROUPING ---
+    merged = df.copy()
+    merged['Group_ID'] = -1
+    group_cnt = 0
+    for i in range(len(merged)):
+        if merged.iloc[i]['Group_ID'] != -1: continue
+        mask = (np.abs(merged['RA']-merged.iloc[i]['RA']) <= 240/3600) & \
+               (np.abs(merged['Dec']-merged.iloc[i]['Dec']) <= 240/3600) & \
+               (merged['Group_ID'] == -1)
+        merged.loc[mask, 'Group_ID'] = group_cnt
+        group_cnt += 1
+
+    # --- STATUS REPORTING ---
+    def check_status(g):
+        # A Reference can be a fully DIRECT file OR a READYRESUM file (since it has DIRECT parts).
+        # A group needs work if there is a NONE or a READYRESUM present.
+        has_ref = (g['ASPCORR'].isin(['DIRECT', 'READYRESUM'])).any()
+        needs_work = (g['ASPCORR'].isin(['NONE', 'READYRESUM'])).any()
+        
+        status = 'COMPLETED' if not needs_work else ('READY' if has_ref else 'ORPHAN')
+        return pd.Series({'Status': status, 'Total_Frames': len(g)})
+
+    summary = merged.groupby(['Group_ID', 'Band']).apply(check_status, include_groups=False).reset_index()
+    return merged, summary, save_dir
+
+
+# --- MODES ---
+def swift_automation_mode(base_path=None, save_path=None):
+    all_frames, summary, _ = _run_core_engine(base_path, save_path)
+    return all_frames, summary
+
+def swift_interactive_mode():
+    print("\n=== Swift UVOT Interactive Mode ===")
+    all_frames, summary, save_dir = _run_core_engine()
+    if all_frames is None: return
+
+    summary_path = _get_unique_filename(os.path.join(save_dir, "workload_summary.csv"))
+    summary.to_csv(summary_path, index=False)
+    
+    print(f"\nSummary saved to: {os.path.basename(summary_path)}")
+    print("\n--- WORKLOAD SUMMARY ---")
+    print(summary['Status'].value_counts().to_frame())
+    
+    while True:
+        choice = input("\nEnter Group_ID to export (or 'q' to quit): ").lower()
+        if choice == 'q': break
+        try:
+            g_id = int(choice)
+            g_data = all_frames[all_frames['Group_ID'] == g_id].sort_values(by='ASPCORR', ascending=False)
+            if not g_data.empty:
+                detail_path = _get_unique_filename(os.path.join(save_dir, f"Group_{g_id}_Details.csv"))
+                g_data.to_csv(detail_path, index=False)
+                print(f"Exported: {os.path.basename(detail_path)}")
+                print(g_data[['OBSID', 'Band', 'ASPCORR', 'Filename']].to_string(index=False))
+        except: print("Invalid ID.")
     
