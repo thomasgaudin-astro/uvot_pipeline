@@ -905,33 +905,6 @@ def read_xrt_data(source_name):
 
     return xrt_data, xrt_ul_data
 
-
-    #Start of IAC
-# This function is fixing a major problem I am haveing, "PermissionError" I.E. a file already exists with the same name causing it to crash.
-# Made it a Def as it may comeup again and be used again.
-def _get_unique_filename(base_path):
-    #If a File like 'Summery.csv' is locked or exists this function will automatically find the next free name which is typically 'Summery1.csv' or such
-    #If of course the files doesnt exist yet, we just use the base name.
-    if not os.path.exists(base_path):
-        return base_path
-    # Spliting the path into parts : "C"/Folder/file" and ".csv", This is actually something I didnt know how to do how it works and why is
-    # We cant just do : Path = Basepath + _1 or the like because that would make Summery.csv_1 which is bad, so we have to split it so we can insert the number bofore the extension I.E. "C"/Folder/file" + _1 + ".csv" aint that neat. 
-    directory, filename = os.path.split(base_path)
-    name, ext = os.path.splitext(filename)
-    
-    counter = 1
-    while True:
-        new_name = f"{name}_{counter}{ext}"
-        new_path = os.path.join(directory, new_name) # Check if file exists; if not, return this name
-        if not os.path.exists(new_path):
-            return new_path
-        try: # If it exists, try to see if it's writable (not locked by Excel, I.E. have it currenty open) 
-            with open(new_path, 'a'): # Test if file is locked
-                return new_path
-        except IOError:
-            counter += 1 # If it still errors at the end add to the counter and try again, maybe +1 already existed. If of course thats not the problem this will go on forever.
-
-
 # -------------------- The hunt for Red ASPCORR -----------------------------
 # This has given me some pause for some time as what I did in the past was a very basic bit of code that used existing fkeyprint code and read the extension
 # That on hindsight didnt work to well for two reasons, 1: I was only reading the first extension and not the whole list(whops) 2: Meant that code only worked for WSL, this needs to be universal.
@@ -1094,4 +1067,5 @@ def swift_interactive_mode():
                 print(f"Exported: {os.path.basename(detail_path)}")
                 print(g_data[['OBSID', 'Band', 'ASPCORR', 'Filename']].to_string(index=False))
         except: print("Invalid ID.")
+    
     
