@@ -828,6 +828,28 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
             with open(reg_filename, mode='w', encoding='utf-8') as regfile:
                 regfile.write(new_reg_text)
 
+def find_aspect_none_snapshots(path_to_frame):
+
+    fkeyprint_command = up.create_fkeyprint_bash_command(path_to_frame)
+
+    fkeyprint_out = up.run_fkeyprint(fkeyprint_command)
+
+    corrected = re.findall("# EXTENSION:    [0-9]\nASPCORR = 'DIRECT  '", fkeyprint_out)
+    uncorrected = re.findall("# EXTENSION:    [0-9]\nASPCORR = 'NONE    '", fkeyprint_out)
+    
+    exclude=[]
+    
+    for frame in uncorrected:
+        exclude_frame = re.findall("[0-9]", frame)[0]
+        exclude.append(exclude_frame)
+    
+    if len(exclude) > 0:
+        exclude_string = ','.join(exclude)
+        return exclude_string
+    else:
+        print('No snapshots need aspect correction. Excluding no frames from master ref.')
+        return None
+
 def create_master_ref_file(source_name, band, ref_files, group_name):
     """
     Takes uvot reference frames and sums them together. 
