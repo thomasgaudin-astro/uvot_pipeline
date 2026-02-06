@@ -46,3 +46,10 @@ parser.add_argument('-mp', '--make_plots', action='store_true', help='Prints com
 
 args = parser.parse_args()
 
+#insert download products code here
+
+#insert subfolder idenfitication code here
+
+#insert aspect correction parameter initialization here
+
+master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
