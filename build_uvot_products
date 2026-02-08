@@ -2,25 +2,36 @@
 # -*- coding: utf-8 -*-
 
 import os
+import subprocess
 import sys
+import platform
 
+import math
 import pandas as pd
 import numpy as np
+import re
 
 import shutil
-import uvot_pipeline as up
+#import uvot_pipeline as up
 import argparse
 import warnings
+import requests
 
 from tqdm import tqdm
-from sh import gunzip
+#from sh import gunzip
 
-from astropy.units import UnitsWarning
+import astropy.units as u
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
+from astropy.wcs import WCS
+from astropy.table import QTable, Table
 
-from swifttools.swift_too import Clock
+from swifttools.swift_too import Clock,TOO, Resolve, ObsQuery, Data
+
+import tkinter as tk
+from tkinter import filedialog
+
 
 # Set all required environment variables
 os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
@@ -34,22 +45,930 @@ os.environ['CALDBALIAS'] = '/bulk/pkg/caldb/software/tools/alias_config.fits'
 # Ensure pfiles directory exists
 os.makedirs("/tmp/pfiles", exist_ok=True)
 
-# Set up arguments that need to be passed to the scripts
+
+try:
+    get_ipython()
+    IN_NOTEBOOK = True
+except NameError:
+    IN_NOTEBOOK = False
+
+# Set up arguments
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
+parser.add_argument('source_name', nargs='?', default=None, 
+                    help="The name of the source. This will be used to name the output photometry file.")
+parser.add_argument('source_ra', nargs='?', default=None, type=float,
+                    help="The Right Ascension coordinate of the source in decimal degrees.")
+parser.add_argument('source_dec', nargs='?', default=None, type=float,
+                    help="The Declination coordinate of the source in decimal degrees.")
+parser.add_argument('-v', '--verbose', action='store_true', 
+                    help='Prints command outputs instead of suppressing them.')
+parser.add_argument('-wsl', '--use_wsl', action='store_true', 
+                    help='Force use of WSL backend (for Windows users).')
+parser.add_argument('-mp', '--make_plots', action='store_true', 
+                    help='Generate plots during processing.')
 
-parser.add_argument('source_name', help="The name of the source. This will be used to name the output photometry file.")
-parser.add_argument('source_ra', help="The Right Ascension coordinate of the source in decimal degrees.", type=float)
-parser.add_argument('source_dec', help="The Right Ascension coordinate of the source in decimal degrees.", type=float)
-parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
-parser.add_argument('-wsl', '--use_wsl', action='store_true', help='Prints command outputs instead of surpessing them.')
-parser.add_argument('-mp', '--make_plots', action='store_true', help='Prints command outputs instead of surpessing them.')
 
-args = parser.parse_args()
+# Parse args differently based on environment
+if IN_NOTEBOOK:
+    # In Jupyter, ignore sys.argv and use defaults
+    class NotebookArgs:
+        source_name = None
+        source_ra = None
+        source_dec = None
+        verbose = False
+        use_wsl = True  # Set to True if on Windows
+        make_plots = False
+    
+    args = NotebookArgs()
+else:
+    # Command line - parse normally
+    args = parser.parse_args()
+
+# Auto-detect backend unless overridden
+if args.use_wsl:
+    HEASOFT_BACKEND = "wsl"
+    print("Using WSL backend (forced by flag)")
+else:
+    # Auto-detect: use native on Mac/Linux, wsl on Windows
+    if platform.system() == "Windows":
+        HEASOFT_BACKEND = "wsl"
+        print("Auto-detected Windows - using WSL backend")
+    else:
+        HEASOFT_BACKEND = "native"
+        print("Auto-detected MacOS - using native backend")
+
+
+
+class DownloadError(Exception):
+    """Raise when requests status quo does not return 200."""
+    pass
+
 
 #insert download products code here
 
 #insert subfolder idenfitication code here
+def prepare_path(path):
+    """
+    - On Windows/WSL: Translates C:\ to /mnt/c/
+    - On Mac/Linux: Returns the path exactly as it is.
+    """
+    if HEASOFT_BACKEND == "native":
+        return path  # Do nothing for Mac users
+    
+    # WSL logic only executes if backend is 'wsl'
+    abs_path = os.path.abspath(path)
+    drive, rest = os.path.splitdrive(abs_path)
+    if drive:
+        drive_letter = drive[0].lower()
+        return f"/mnt/{drive_letter}{rest.replace('\\', '/')}"
+    return abs_path.replace('\\', '/')
+    
+def find_obs_file(base_path, obsid, band, file_type='sk'):
+    """
+    Finds the actual path of a file even if the folder has extra date tags.
+    """
+    target_filename = f"sw{obsid}{band}_{file_type}.img.gz"
+    for root, dirs, files in os.walk(base_path):
+        # Check if we are in the correct subfolder structure
+        if obsid in root and root.endswith(os.path.join("uvot", "image")):
+            if target_filename in files:
+                return os.path.join(root, target_filename)
+    return None
+
 
 #insert aspect correction parameter initialization here
 
 master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+
+
+###########################################################################################################################################
+#Bellow is testing for clean_up_data cross compatiablity code 
+
+def run_heasoft_command(command):
+    print(f"\n[SYSTEM]: Running HEASOFT command...")
+    
+    if HEASOFT_BACKEND == "wsl":
+        # --- This is YOUR working logic ---
+        full_cmd = f"conda activate henv && {command}"
+        result = subprocess.run(
+            ["wsl", "bash", "-ic", full_cmd],
+            text=True,
+            capture_output=True,
+        )
+        
+    elif HEASOFT_BACKEND == "native":
+        # --- This is the MAC lane ---
+        full_cmd = f"source $HEADAS/headas-init.sh && {command}"
+        result = subprocess.run(
+            ["bash", "-lc", full_cmd],
+            text=True,
+            capture_output=True,
+        )
+    else:
+        raise ValueError(f"Unknown HEASOFT_BACKEND: {HEASOFT_BACKEND}")
+
+    if result.returncode != 0:
+        print("  [RESULT]: FAILED")
+        print("--- Error Details ---")   # Exists just to quick test if the code is working
+        print(result.stderr)
+    else:
+        print("  [RESULT]: SUCCESS")
+
+    return result
+
+# --- UTILS FOR CROSS-PLATFORM PATHS ---
+
+#MACOS UVOTDETECT version
+def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
+
+    # Construct bash command
+    bash_command = rf"""
+    bash -c '
+    source {os.environ['HEADAS']}/headas-init.sh
+    uvotdetect \\
+        infile={source_path} \\
+        outfile={output_path} \\
+        expfile={exposure_path} \\
+        threshold=3 \\
+        sexfile=DEFAULT \\
+        plotsrc=NO \\
+        regfile={reg_path} \\
+        zerobkg=0.03 \\
+        expopt=BETA \\
+        calibrate=YES \\
+        clobber=YES
+    '
+    """
+
+    return bash_command
+
+def run_uvotdetect(uvotdetect_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
+
+    # print("STDOUT:\n", result.stdout)
+    # print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
+def run_uvotdetect_verbose(uvotdetect_command):
+
+    # Run the command
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
+
+    print("STDOUT:\n", result.stdout)
+    print("STDERR:\n", result.stderr)
+
+    return result.stdout
+
+
+#WSL UVOTDETECT version
+def batch_run_uvotdetect_wsl(base_path):
+    """
+    Walks through base_path and runs uvotdetect on all SK files.
+    """
+    
+    BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+    
+    def get_extension_count(filepath):
+        """Get number of extensions using astropy."""
+        try:
+            with fits.open(filepath) as hdul:
+                return len(hdul) - 1
+        except Exception as e:
+            print(f"  Error reading FITS: {e}")
+            return 0
+    
+    # Walk directory tree
+    for root, dirs, files in os.walk(base_path):
+        if os.path.basename(root) != "image":
+            continue
+        
+        # Convert path for HEASOFT command 
+        img_dir_heasoft = prepare_path(root)
+        
+        print(f"\n Processing image directory:")
+        print(f"   {root}")
+        
+        # Find all OBSID patterns in this directory
+        obsid_pattern = re.compile(r"sw(\d{11})([a-z0-9]+)_sk\.img\.gz") #Learned this method from a youtube video,a way to search the entire library for a spesific patern, really neat.
+        
+        for file in files:
+            match = obsid_pattern.match(file)
+            if not match:
+                continue
+            
+            OBSID, band = match.groups()
+            
+            if band not in BANDS:
+                continue
+            
+            print(f"\n Found SK image: {file}")
+            
+            # Define output files
+            detect_base = f"{band}_detect.fits"
+            detect_path = os.path.join(root, detect_base)
+            
+            if os.path.exists(detect_path):
+                print("   Detect file already exists — skipping")
+                continue
+            
+            # Use find_obs_file to get the full path
+            sk_file_path = find_obs_file(base_path, OBSID, band, file_type='sk')
+            
+            if not sk_file_path:
+                print(f"   Could not find SK file for OBSID={OBSID}, band={band}")
+                continue
+            
+            # Get extension count
+            ext_count = get_extension_count(sk_file_path)
+            print(f"   {ext_count} image extensions found")
+            
+            # Prepare paths for HEASOFT
+            sk_file_heasoft = prepare_path(sk_file_path)
+            detect_base_heasoft = prepare_path(detect_path)
+            
+            # Get just the filenames for heredoc (cd handles the directory)
+            sk_filename = os.path.basename(sk_file_path)
+            detect_filename = os.path.basename(detect_path)
+            
+            # Single-extension case
+            if ext_count <= 1:
+                print("  Running single-extension detect...")
+                uvotdetect_cmd = (
+                    f"cd '{img_dir_heasoft}' && "
+                    f"uvotdetect << end\n"
+                    f"{sk_filename}\n"
+                    f"{detect_filename}\n"
+                    f"NONE\n"
+                    f"3\n"
+                    f"end"
+                )
+                run_heasoft_command(uvotdetect_cmd)
+            
+            # Multi-extension case
+            else:
+                for ext in range(1, ext_count + 1):
+                    detect_ext = f"{band}_detect_ext{ext}.fits"
+                    detect_ext_path = os.path.join(root, detect_ext)
+                    
+                    if os.path.exists(detect_ext_path):
+                        print(f"   Extension {ext} detect exists — skipping")
+                        continue
+                    
+                    print(f"   Running detect on extension {ext}")
+                    
+                    detect_ext_filename = os.path.basename(detect_ext_path)
+                    
+                    uvotdetect_cmd = (
+                        f"cd '{img_dir_heasoft}' && "
+                        f"uvotdetect << end\n"
+                        f"{sk_filename}[{ext}]\n"
+                        f"{detect_ext_filename}\n"
+                        f"NONE\n"
+                        f"3\n"
+                        f"end"
+                    )
+                    run_heasoft_command(uvotdetect_cmd)
+    
+    print("\n UVOT Detect processing complete!")
+
+
+
+def detect_smeared_frames(base_path):
+    """
+    Walks through base_path and detects smeared frames by analyzing all detect files.
+    Returns a list of observation folder paths that contain smeared frames.
+    """
+
+    detect_pattern = re.compile(r'.*_detect.*\.fits$')
+    
+    print("\n Scanning for detect files...")
+    
+    # Find all detect files
+    detect_files = []
+    for root, dirs, files in os.walk(base_path):
+        if os.path.basename(root) == "image":
+            for file in files:
+                if detect_pattern.match(file):
+                    detect_files.append(os.path.join(root, file))
+    
+    print(f"Found {len(detect_files)} detect files to analyze")
+    
+    smeared_obs_folders = set()  # Use set to avoid duplicates
+    
+    # Analyze each detect file
+    for filename in tqdm(detect_files, desc="Analyzing frames"):
+        try:
+            with fits.open(filename, memmap=False) as hdul:
+                # Skip if no data extension
+                if len(hdul) < 2:
+                    continue
+                
+                data = hdul[1].data
+                
+                # Skip if no detections
+                if data is None or len(data) == 0:
+                    continue
+                
+                # Convert big-endian data to native byte order
+                prof_major = np.array(data['PROF_MAJOR'], dtype=np.float64)
+                prof_minor = np.array(data['PROF_MINOR'], dtype=np.float64)
+                flags = np.array(data['FLAGS'], dtype=np.int32)
+                
+                # Create DataFrame
+                detected_frame = pd.DataFrame({
+                    'PROF_MAJOR': prof_major,
+                    'PROF_MINOR': prof_minor,
+                    'FLAGS': flags
+                })
+                
+                # Filter for good detections (FLAGS == 0)
+                detected_frame = detected_frame[detected_frame['FLAGS'] == 0]
+                
+                # Skip if no good detections
+                if len(detected_frame) == 0:
+                    continue
+                
+                # Calculate eccentricity
+                a = np.mean(detected_frame['PROF_MAJOR'])
+                b = np.mean(detected_frame['PROF_MINOR'])
+                
+                # Avoid division by zero or invalid sqrt
+                if a > 0 and a >= b:
+                    c = math.sqrt(a**2 - b**2)
+                    e = c / a
+                    
+                    # If eccentricity >= 0.5, mark the ENTIRE observation folder
+                    if e >= 0.5:
+                        obs_folder = get_observation_folder(filename, base_path)
+                        
+                        if obs_folder and obs_folder not in smeared_obs_folders:
+                            smeared_obs_folders.add(obs_folder)
+                            print(f"  Smeared observation: {os.path.basename(obs_folder)} (e={e:.3f})")
+        
+        except Exception as ex:
+            print(f"  Error processing {filename}: {ex}")
+            continue
+    
+    smeared_list = list(smeared_obs_folders)
+    print(f"\n Detection complete! Found {len(smeared_list)} smeared observation folders.")
+    return smeared_list
+
+
+def remove_smeared(base_path, smeared_obs_folders):
+    """
+    Moves smeared observation folders to a 'Smeared' directory.
+    """
+    if not smeared_obs_folders:
+        print("No smeared frames to move.")
+        return
+    
+    # Create Smeared directory
+    smeared_dir = os.path.join(base_path, "Smeared")
+    os.makedirs(smeared_dir, exist_ok=True)
+    
+    print(f"\n Moving {len(smeared_obs_folders)} smeared observations...")
+    
+    moved_count = 0
+    for obs_folder in smeared_obs_folders:
+        try:
+            obs_name = os.path.basename(obs_folder)
+            destination = os.path.join(smeared_dir, obs_name)
+            
+            # Skip if already exists in Smeared
+            if os.path.exists(destination):
+                print(f"   {obs_name} already in Smeared folder, skipping...")
+                continue
+            
+            shutil.move(obs_folder, destination)
+            print(f"  Moved: {obs_name}")
+            moved_count += 1
+            
+        except Exception as ex:
+            print(f"  Error moving {obs_folder}: {ex}")
+    
+    print(f"\n Smeared frame removal complete! Moved {moved_count} observation folders.")
+    return moved_count
+
+
+# -------------------- The hunt for Red ASPCORR -----------------------------
+# This has given me some pause for some time as what I did in the past was a very basic bit of code that used existing fkeyprint code and read the extension
+# That on hindsight didnt work to well for two reasons, 1: I was only reading the first extension and not the whole list(whops) 2: Meant that code only worked for WSL, this needs to be universal.
+
+#So what we now do instead is a scan the FITS file itself for the extension and read the proper sheet. I.E. the fits files themselves have extension as the photos do so they may have-- Sheet 0 (Primary) Sheet 1(Image) Sheet 2(Image), etc.
+# So we will have to Loop through all sheets for our hunt
+def _scan_header_for_aspcorr(file_path):
+    """
+    Scans for mixed DIRECT and NONE statuses.
+    If both exist, it is a 'READYRESUM' (needs fix + re-summing).
+    """
+    if not file_path: return "NONE"
+    try:
+        with fits.open(file_path) as hdul:
+            # We use a set to get only unique statuses across all sheets (extensions)
+            statuses = set()
+            for hdu in hdul:
+                val = hdu.header.get('ASPCORR', 'NONE')
+                statuses.add(str(val).strip().upper())
+            
+            # --- THE READYRESUM LOGIC ---
+            # If it has some good and some bad, it's Ready to be fixed then Re-Summed.
+            if 'DIRECT' in statuses and 'NONE' in statuses:
+                return 'READYRESUM'
+            if 'NONE' in statuses: 
+                return 'NONE'
+            if 'DIRECT' in statuses: 
+                return 'DIRECT'
+            return "NONE"
+    except:
+        return "NONE"
+
+# Essentially the same as above,we are grabing the RA/DEC from the image header. The only funny little thing about this is NAXIS
+# A bit of a problem you may run into if you make a few misteps is not all FITS extensions are images, we need to find which ones are. The best way I would find is to look for NAXIS I.E. does the file have Height and Width.
+def _get_coords(file_path):
+    if not file_path: 
+        return None, None
+    try:
+        with fits.open(file_path) as hdul:  
+            for i, hdu in enumerate(hdul):
+                naxis = hdu.header.get('NAXIS', 0)
+                
+                if naxis >= 2:
+                    w = WCS(hdu.header)
+                    
+                    naxis1 = hdu.header.get('NAXIS1', 0)
+                    naxis2 = hdu.header.get('NAXIS2', 0)
+                    
+                    cx, cy = naxis1/2.0, naxis2/2.0
+                    ra, dec = w.all_pix2world(cx, cy, 0)
+                    return float(ra), float(dec)
+            
+            print(f" No 2D image found in any HDU")
+            return None, None
+    except Exception as e:
+        print(f" DEBUG _get_coords ERROR: {e}")
+        return None, None
+
+
+# The Engine of the operation
+def _run_core_engine(base_folder=None, save_dir=None):
+        # This was funky to figure out, the os.path.normpath and strip inputs where only added to have the code be universal and convienent. Atleast it should work
+    # Since I only have windows Not 100% sure on it working or not, but it should be striping quotes from drag anddrop folders like Mac allows and Normalzing slashes.
+    if not base_folder:
+        base_folder = os.path.normpath(input("1. Path to UVOT raw data: ").strip().strip('"').strip("'"))
+    if not save_dir:
+        save_dir = os.path.normpath(input("2. Save directory: ").strip().strip('"').strip("'"))
+    
+    if not os.path.exists(save_dir): 
+        os.makedirs(save_dir)
+
+    bands_list = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+    raw_results = []
+    
+    # Now normally you would try to use a walk here I know I did. Thats a bad idea turns out as if you do that it dives into every sub-sub-folder Immediately.
+    # Leading to double counting, so instead we try to control it a bit.
+    try:
+        # EXCLUDE the Smeared folder
+        top_folders = [f for f in os.listdir(base_folder) 
+                      if os.path.isdir(os.path.join(base_folder, f)) 
+                      and f != "Smeared"]
+        print(f"DEBUG: Found {len(top_folders)} top-level folders (excluding Smeared)")
+        
+        # Sample first 3 folders to see what we're dealing with
+        print(f"DEBUG: Sample folder names:")
+        for i, folder in enumerate(top_folders[:3]):
+            print(f"  {i+1}. {folder}")
+            
+    except Exception as e: 
+        print(f"DEBUG: Error listing directories: {e}")
+        return None, None, None
+
+    folder_pattern = re.compile(r"(\d{11})")
+
+    # For debuging bellow since it wasnt working.
+    matched_folders = 0
+    files_found_count = 0
+    coords_failed = 0
+    
+    # Check first matching folder in detail
+    first_detailed_check = False
+
+    for folder in top_folders:
+        match = folder_pattern.search(folder)
+        if not match: 
+            print(f"DEBUG: Folder '{folder}' doesn't match pattern - skipping")
+            continue
+        
+        matched_folders += 1
+        obsid = match.group(1).zfill(11) # The subfolders we have are just the OBSIDS so this is a quick and easy way to get those now for later.
+        # This bit had a lot of work but into it because of an intresting error I wasent expecting to have. We havesummed files which are the Images we want to use but those miss keywords
+        # We also have Sky files which we dont want to use unless we have to but those always have keywords like the ASPCORR we need, so we had to scan and use both types if they exist to accomplish differnt goals.
+        
+        # Detailed check on first folder only
+        if not first_detailed_check:
+            first_detailed_check = True
+            folder_path = os.path.join(base_folder, folder)
+            
+            # Walk and show structure
+            print(f"DEBUG: Folder structure:")
+            for root, dirs, files in os.walk(folder_path): 
+                rel_path = os.path.relpath(root, folder_path)
+                if rel_path == ".":
+                    rel_path = "[root]"
+                print(f"  {rel_path}/ - {len(files)} files, {len(dirs)} subdirs")
+                
+                # Show SK files if any
+                sk_pattern = re.compile(r'.*_sk.*\.(img|fits|gz)$')
+                sk_files = [f for f in files if sk_pattern.match(f)] # Finding the exact files in the folder we are looking for
+                if sk_files:
+                    print(f" SK files found: {sk_files[:3]}") 
+                
+                # Show summed files if any
+                summed_pattern = re.compile(r'.*summed.*\.(img|fits|gz)$')
+                summed_files = [f for f in files if summed_pattern.match(f)] # [f for f in files if ...]: Iterates through each item (f) in the files list.
+                if summed_files:
+                    print(f" Summed files found: {summed_files[:3]}") # This all just exists for debuging and can be removed!!!!
+        
+        band_files = {b: {'sum': None, 'sky': None} for b in bands_list}
+
+        for root, _, filenames in os.walk(os.path.join(base_folder, folder)):  # It okay to use walk now since we took care of the double counting to find what we need.
+            for f in filenames:
+                f_low = f.lower()
+                if not any(ext in f_low for ext in ['.img', '.fits', '.gz']): 
+                    continue
+                for band in bands_list:
+                    if band in f_low:
+                        if "summed" in f_low: 
+                            band_files[band]['sum'] = os.path.join(root, f) # Directly making the path.
+                            files_found_count += 1
+                        elif "_sk" in f_low: 
+                            band_files[band]['sky'] = os.path.join(root, f)
+                            files_found_count += 1
+
+        # Use Summed for the image/coords, but Sky for the ASPCORR status, this is very old logic That I am not chaning, this was because I had summed files and belived they would be more useful for the coords. Not really true but since its working I no touchy.
+        for band, files in band_files.items():
+            sum_f, sky_f = files['sum'], files['sky']
+            if not sum_f and not sky_f: 
+                continue
+            
+            target_file = sum_f if sum_f else sky_f  # Setting the target for what files should be processed that being the Summed files.
+            status_source_file = sky_f if sky_f else sum_f # Setting the target for what files should be used for ASPCORR that being the sky files.
+
+            ra, dec = _get_coords(target_file) # Get RA,DEC from the img, since we only got the center location before and still should proably need this.
+            if ra is None: 
+                coords_failed += 1
+                continue 
+            
+            raw_results.append({
+                "OBSID": obsid, "Band": band, "RA": ra, "Dec": dec,
+                "Full_Path": target_file, 
+                "Filename": os.path.basename(target_file),
+                "ASPCORR": _scan_header_for_aspcorr(status_source_file)
+            })
+
+    print(f"\nDEBUG SUMMARY:")
+    print(f"  Folders matching pattern: {matched_folders}")
+    print(f"  SK/summed files found: {files_found_count}")
+    print(f"  Files with failed coordinate extraction: {coords_failed}")
+    print(f"  collected: {len(raw_results)} raw results") #All debuging things to check where it was failing. Fun fact I found it, I never inported astropy.wcs, i added dozens of debuging lines of code just to tell me something I already knew.... Im stupid, and Now im not removing them since I might need them again.
+
+#  ----Just a bit more cleanup---
+    df = pd.DataFrame(raw_results)
+    if df.empty: 
+        print("DEBUG: DataFrame is empty - no data found")
+        return None, None, None
+        
+    df = df.drop_duplicates(subset=['OBSID', 'Band'], keep='first') # This is just to 100% make sure that the same file couldnt have been scanned twice by  chekcing for duplicants, the code kept thinking there was more extensions then there was somewhere and now im paranoid.
+
+    # --- SPATIAL GROUPING ---
+     # We group by RA/Dec so that OBSIDs looking at the same spot are linked. This is what we where talking about before when it comes to finding nearby frames and sorting them.
+    # This allows uncorrected files to use a 'DIRECT' neighbor as a reference, as long as it is within the parameters. (within 240 arcsec, I know this is 6arc min not 7 which is what we are going to check for stars and thats on purpose. I wanted extra wiggle room.).
+    merged = df.copy()
+    merged['Group_ID'] = -1
+    group_cnt = 0
+    for i in range(len(merged)):
+        if merged.iloc[i]['Group_ID'] != -1: continue
+        mask = (np.abs(merged['RA']-merged.iloc[i]['RA']) <= 240/3600) & \
+               (np.abs(merged['Dec']-merged.iloc[i]['Dec']) <= 240/3600) & \
+               (merged['Group_ID'] == -1)
+        merged.loc[mask, 'Group_ID'] = group_cnt
+        group_cnt += 1 #This code is makeing a box and find all ids that fit within that box and assiging them them a group id and then making a new one an repating until finished. 
+        #Also something I learned from testing this, is some bands in certain groups are taken at differnt angels, which I didnt think would happen.
+
+    
+    def check_status(g):
+        # A Reference can be a fully DIRECT file OR a READYRESUM file (since it has DIRECT parts).
+        # A group needs work if there is a NONE or a READYRESUM present.
+        has_ref = (g['ASPCORR'].isin(['DIRECT', 'READYRESUM'])).any()
+        needs_work = (g['ASPCORR'].isin(['NONE', 'READYRESUM'])).any()
+        # Defines the rest of the grouping types, completed is if the group only has_ref, ready is a mix of both and Orphan is only has_unc
+        status = 'COMPLETED' if not needs_work else ('READY' if has_ref else 'ORPHAN')
+        return pd.Series({'Status': status, 'Total_Frames': len(g)})
+    # Use the auto rename function from above here.
+    summary = merged.groupby(['Group_ID', 'Band']).apply(check_status, include_groups=False).reset_index()
+    return merged, summary, save_dir
+
+
+# --- MODES ---
+def swift_automation_mode(base_path=None, save_path=None):
+    all_frames, summary, _ = _run_core_engine(base_path, save_path)
+    return all_frames, summary
+
+def swift_interactive_mode():
+    print("\n=== Swift UVOT Interactive Mode ===")
+    all_frames, summary, save_dir = _run_core_engine()
+    if all_frames is None: return
+
+    summary_path = _get_unique_filename(os.path.join(save_dir, "workload_summary.csv"))
+    summary.to_csv(summary_path, index=False)
+    
+    print(f"\nSummary saved to: {os.path.basename(summary_path)}")
+    print("\n--- WORKLOAD SUMMARY ---")
+    print(summary['Status'].value_counts().to_frame())
+    
+    while True:
+        choice = input("\nEnter Group_ID to export (or 'q' to quit): ").lower()
+        if choice == 'q': break
+        try:
+            g_id = int(choice)
+            g_data = all_frames[all_frames['Group_ID'] == g_id].sort_values(by='ASPCORR', ascending=False)
+            if not g_data.empty:
+                detail_path = _get_unique_filename(os.path.join(save_dir, f"Group_{g_id}_Details.csv"))
+                g_data.to_csv(detail_path, index=False)
+                print(f"Exported: {os.path.basename(detail_path)}")
+                print(g_data[['OBSID', 'Band', 'ASPCORR', 'Filename']].to_string(index=False))
+        except: print("Invalid ID.")
+    
+#Orhan group sorting
+# -------------------- ORPHAN HUNTING EXPANSION -----------------------------
+def solve_orphan_frames_by_group(base_path=None, save_dir=None, return_data=False, input_df=None, input_summary=None):
+    """
+    1. Loads data using the existing swift_automation_mode.
+    2. Identifies 'ORPHAN' frames (groups with no valid aspect correction).
+    3. Identifies 'REFERENCE' frames (DIRECT or READYRESUM).
+    4. For each Orphan, finds the nearest Reference in 4 directions (N, S, E, W).
+    5. Saves a CSV for each Orphan with those 4 neighbors.
+    """
+    
+    # Data Input Using existing Funtion from IAC to get the DataFrames directly
+    # Note: If you want to skip the input prompts(for automation), Input a base_path and save_dir.
+    if input_df is not None and input_summary is not None:
+        all_frames, summary_df = input_df, input_summary
+        active_save_dir = save_dir if save_dir else os.getcwd()
+    else:
+        # Calls the core engine from IAC code
+        all_frames, summary_df, active_save_dir = _run_core_engine(base_path, save_dir)
+
+    if all_frames is None or summary_df is None:
+        print(" No data returned from core engine. Cannot solve orphan frames.")
+        return None
+
+    # DEBUG: Print what we got, just to check
+    print(f"\n Data loaded:")
+    print(f"   Total frames: {len(all_frames)}")
+    print(f"   Summary groups: {len(summary_df)}")
+    print(f"   Status breakdown:\n{summary_df['Status'].value_counts()}")
+
+    # Identify Orphan Groups 
+    # We find which (Group_ID, Band) combos are orphans from the summary report we get above.
+    orphan_group_keys = summary_df[summary_df['Status'] == 'ORPHAN'][['Group_ID', 'Band']]
+    
+    print(f"\n Found {len(orphan_group_keys)} orphan group-band combinations")
+    
+    if orphan_group_keys.empty:
+        print(" No orphan frames found - nothing to solve!")
+        return {} if return_data else None
+    
+    # Pool of the valid reference frames (must have some usable data)
+    reference_pool = all_frames[all_frames['ASPCORR'].isin(['DIRECT', 'READYRESUM'])].copy()
+    
+    print(f" Reference pool: {len(reference_pool)} frames available")
+    
+    automation_results = {} #Set up container for automation results
+    
+    # Create folder if saving CSVs, And set up folder if we are in manual/save mode
+    if not return_data:
+        orphan_save_path = os.path.join(active_save_dir, "Orphan_Solutions")
+        if not os.path.exists(orphan_save_path): 
+            os.makedirs(orphan_save_path)
+        print(f" Saving CSVs to: {orphan_save_path}")
+
+    # Process Every Frame in Every Orphan Group 
+    count = 0
+    for _, orphan_row in orphan_group_keys.iterrows():
+        g_id = orphan_row['Group_ID']
+        band = orphan_row['Band']
+
+        # Get ALL individual frames belonging to this specific Orphan Group and Band
+        target_frames = all_frames[(all_frames['Group_ID'] == g_id) & (all_frames['Band'] == band)]
+
+        # Filter the reference pool for the matching band (um2 can only use um2, etc.)
+        band_refs = reference_pool[reference_pool['Band'] == band].copy()
+        
+        if band_refs.empty: # If no valid references exist for this specific band, we skip
+            print(f" No references for Group {g_id}, Band {band} - skipping")
+            continue
+
+        for _, frame in target_frames.iterrows(): #Grab some info we will need life the location both in space and on the computer.
+            f_ra, f_dec, f_obsid = frame['RA'], frame['Dec'], frame['OBSID']
+            f_path = frame['Full_Path']
+            
+            # Simple subtraction for distance math
+            # dRA: Positive = East, Negative = West
+            # dDec: Positive = North, Negative = South, Kinda weird part here if you check SAO it has east being positive even though logic would make it negative.
+            band_refs['dRA'] = band_refs['RA'] - f_ra
+            band_refs['dDec'] = band_refs['Dec'] - f_dec
+
+            neighbors = []
+            
+            # Find closest in 4 directions by finding the smallest absolute difference
+            # East (+RA) Find frames where dRA is Positive, sort by smallest distance, The rest follow same logic
+            east = band_refs[band_refs['dRA'] > 0].sort_values('dRA').head(1)
+            # West (-RA) Find frames where dRA is Negative, sort by smallest absolute distance (largest value -> closer to 0)
+            west = band_refs[band_refs['dRA'] < 0].sort_values('dRA', ascending=False).head(1)
+            # North (+Dec)
+            north = band_refs[band_refs['dDec'] > 0].sort_values('dDec').head(1)
+            # South (-Dec)
+            south = band_refs[band_refs['dDec'] < 0].sort_values('dDec', ascending=False).head(1)
+
+            for n in [east, west, north, south]:
+                if not n.empty:  # Safty measure if its not empty run it, Had to add this since one of the orphan frames doesnt have a neighbor in a direction.
+                    neighbors.append(n)
+
+            if neighbors:
+                # Compile the 4 neighbors
+                result_df = pd.concat(neighbors)[['OBSID', 'RA', 'Dec', 'Full_Path', 'Band', 'ASPCORR']]
+                result_df.attrs['orphan_path'] = f_path # We store the orphan's own path as metadata in the result for Automation Mode
+                
+                unique_key = f"{f_obsid}_{band}"
+                
+                # Write CSV or return result
+                if return_data:
+                    automation_results[unique_key] = result_df
+                else:
+                    save_file = os.path.join(orphan_save_path, f"{unique_key}.csv")
+                    result_df.to_csv(save_file, index=False)
+                    print(f"  ✓ Created: {os.path.basename(save_file)}")
+                
+                count += 1
+
+    print(f"\n Directives generated for {count} individual orphan frames.")
+    
+    if not return_data and count > 0:
+        print(f" All CSVs saved to: {orphan_save_path}")
+    
+    return automation_results if return_data else None
+
+
+
+def clean_up_data(automation_mode=False, base_path=None, save_path=None):
+    """  
+        automation_mode (bool): If True, skips GUI and print statements, returns data
+        base_path (str): Required if automation_mode=True
+        save_path (str): Required if automation_mode=True
+        
+        If automation_mode=True, then it will return:
+            - 'all_frames': DataFrame from IAC
+            - 'summary': Summary DataFrame from IAC  
+            - 'orphan_solutions': Dict of orphan solutions
+            - 'smeared_list': List of smeared observation folders
+    """
+    
+    if automation_mode:
+        # Automation mode - no prints (except errors)
+        if not base_path or not save_path:
+            raise ValueError("automation_mode requires base_path and save_path")
+    else:
+        # Interactive mode
+        root = tk.Tk()
+        root.withdraw()
+        
+        print("Please select the data directory using the popup window...")
+        base_path = filedialog.askdirectory(title="Select the Base Directory for Data Cleanup")
+        
+        if not base_path:
+            print("No directory selected. Aborting.")
+            return
+        
+        print(f"Selected Data Directory: {base_path}")
+        
+        print("\nPlease select where you want to save results...")
+        save_path = filedialog.askdirectory(title="Select Save Directory for Results")
+        
+        if not save_path:
+            print("No save directory selected. Using data directory as save location.")
+            save_path = base_path
+        
+        print(f"Selected Save Directory: {save_path}")
+    
+    # Initialize results dictionary for automation mode
+    results = {
+        'all_frames': None,
+        'summary': None,
+        'orphan_solutions': None,
+        'smeared_list': None
+    }
+    
+    # 1. RUN UVOT DETECT
+    if not automation_mode:
+        print("\n=== Running UVOT Detect ===")
+    try:
+        # ROUTE TO CORRECT BACKEND
+        if HEASOFT_BACKEND == "wsl":
+            batch_run_uvotdetect_wsl(base_path)
+        else:
+            run_uvotdetect(base_path)
+        
+        if not automation_mode:
+            print(" UVOTDETECT complete")
+    except Exception as e:
+        print(f" UVOTDETECT failed: {e}")
+        if not automation_mode:
+            import traceback
+            traceback.print_exc()
+    
+    
+    # 2. DETECT SMEARED FRAMES
+    if not automation_mode:
+        print("\n=== Detecting Smeared Frames ===")
+    try:
+        smeared_list = detect_smeared_frames(base_path)
+        results['smeared_list'] = smeared_list
+        
+        if not automation_mode:
+            print(f" Found {len(smeared_list) if smeared_list else 0} smeared frames")
+    except Exception as e:
+        print(f" Smeared frame detection failed: {e}")
+        results['smeared_list'] = []
+    
+    # 3. RUN IAC
+    if not automation_mode:
+        print("\n=== Running IAC Swift Automation ===")
+        
+    all_frames, summary = swift_automation_mode(base_path=base_path, save_path=save_path)
+    results['all_frames'] = all_frames
+    results['summary'] = summary
+    
+    if all_frames is None or summary is None:
+        if not automation_mode:
+            print(" IAC automation failed to generate data.")
+    else:
+        # 4. SOLVE ORPHAN FRAMES
+        if not automation_mode:
+            print("\n=== Solving Orphan Frames ===")
+        
+        # In automation mode, return the data instead of saving CSVs
+        orphan_solutions = solve_orphan_frames_by_group(
+            base_path=base_path, 
+            save_dir=save_path, 
+            return_data=automation_mode,  # Return data in automation mode
+            input_df=all_frames,
+            input_summary=summary
+        )
+        results['orphan_solutions'] = orphan_solutions
+    
+    # 5. REMOVE SMEARED FRAMES
+    if smeared_list:
+        if not automation_mode:
+            print("\n=== Removing Smeared Frames ===")
+        remove_smeared(base_path, smeared_list)
+    else:
+        if not automation_mode:
+            print("\n=== No Smeared Frames to Remove ===")
+    
+    if not automation_mode:
+        print("\n=== Clean Up Data Process Complete ===")
+        print(f"Results saved to: {save_path}")
+        return None
+    else:
+        # Return all data for downstream processing
+        return results
+"""
+What you get in automation mode:
+results['all_frames'] - DataFrame with columns:
+OBSID, Band, RA, Dec, Full_Path, Filename, ASPCORR, Group_ID
+
+results['summary'] - DataFrame with columns:
+Group_ID, Band, Status, Total_Frames
+
+results['orphan_solutions'] - Dict like:
+{
+    "00010056003_um2": DataFrame([
+        {'OBSID': '...', 'RA': ..., 'Dec': ..., 'Full_Path': '...', 'Band': '...', 'ASPCORR': '...'},
+        # ... 4 reference frames (N, S, E, W)
+    ]),
+    # ... more orphans
+}
+"""
+
+######################################################################################################################################## End of Clean up
