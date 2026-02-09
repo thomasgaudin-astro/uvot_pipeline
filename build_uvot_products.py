@@ -53,3 +53,4 @@ args = parser.parse_args()
 #insert aspect correction parameter initialization here
 
 master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+

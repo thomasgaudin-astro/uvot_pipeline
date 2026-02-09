@@ -27,6 +27,7 @@ mpl.rcParams['font.family'] = 'Serif'
 parser = argparse.ArgumentParser(description='Options for Plot Light Curves Script.')
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('-hjd', '--convert_hjd', action='store_true', help="Converts HJD-2450000 times to MJD.")
 
 args = parser.parse_args()
 
@@ -112,9 +113,15 @@ while prompt_xrt == True:
 print('Grabbing data for source.\n')
 
 if is_ogle == True:
-
-    ogle_data = up.read_ogle_data(args.source_name)
-    truncated_ogle_data = ogle_data[ogle_data['MJD'] >= 57563]
+    if args.convert_hjd == True:
+        ogle_data = up.read_ogle_data(args.source_name)
+        ogle_data['MJD'] = ogle_data['MJD'] + 2400000
+        ogle_data['MJD'] = ogle_data['MJD'] + 2450000
+        ogle_data['MJD'] = ogle_data['MJD'] - 2400000.5
+        truncated_ogle_data = ogle_data[ogle_data['MJD'] >= 57563]
+    else:
+        ogle_data = up.read_ogle_data(args.source_name)
+        truncated_ogle_data = ogle_data[ogle_data['MJD'] >= 57563]
 
 if is_xrt == True:
 
