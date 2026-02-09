@@ -52,6 +52,9 @@ source_name = args.source_name
 source_ra = args.source_ra
 source_dec = args.source_dec
 
+#initialize bands
+possible_bands = ['uvv', 'ubb', 'uuu', 'uw1', 'um2', 'uw2']
+
 #loop variable initialization
 files_located = False
 need_rad = True
@@ -111,7 +114,11 @@ while files_located == False:
         print("Please pick a valid option [Y/N]")
 
 #insert aspect correction parameter initialization here
+side_buffer, num_stars = initialize_aspect_corrections()
 
+#initialize master table
 master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+
+
 
 
