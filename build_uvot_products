@@ -148,7 +148,6 @@ def run_heasoft_command(command):
     print(f"\n[SYSTEM]: Running HEASOFT command...")
     
     if HEASOFT_BACKEND == "wsl":
-        # --- This is YOUR working logic ---
         full_cmd = f"conda activate henv && {command}"
         result = subprocess.run(
             ["wsl", "bash", "-ic", full_cmd],
@@ -157,7 +156,6 @@ def run_heasoft_command(command):
         )
         
     elif HEASOFT_BACKEND == "native":
-        # --- This is the MAC lane ---
         full_cmd = f"source $HEADAS/headas-init.sh && {command}"
         result = subprocess.run(
             ["bash", "-lc", full_cmd],
@@ -447,7 +445,6 @@ def remove_smeared(base_path, smeared_obs_folders):
             
             # Skip if already exists in Smeared
             if os.path.exists(destination):
-                print(f"   {obs_name} already in Smeared folder, skipping...")
                 continue
             
             shutil.move(obs_folder, destination)
@@ -883,7 +880,6 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
     if not automation_mode:
         print("\n=== Running UVOT Detect ===")
     try:
-        # ROUTE TO CORRECT BACKEND
         if HEASOFT_BACKEND == "wsl":
             batch_run_uvotdetect_wsl(base_path)
         else:
