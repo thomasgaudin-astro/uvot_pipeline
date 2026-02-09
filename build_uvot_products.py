@@ -116,8 +116,11 @@ while files_located == False:
 #insert aspect correction parameter initialization here
 side_buffer, num_stars = initialize_aspect_corrections()
 
-#initialize master table
+#initialize master snapshots table
 master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+
+#populate master snapshots table
+master_table = populate_observations_table(main_path, master_table)
 
 
 
