@@ -427,6 +427,46 @@ def download_uvot_data(source_name, source_ra, source_dec, rad):
         if q.exposure.total_seconds() > 30:
             Data(obsid=query[ind].obsid, uvot=True, outdir=f"~/{source_name}/UVOT")
 
+def initialize_aspect_corrections():
+
+    print('Setting Global Parameters for Aspect Correction:\n')
+                
+    #change the parameters of the aspect correction process
+    sb_needed = True
+    ns_needed = True
+        
+    while sb_needed == True:
+        
+        side_buffer = input("Please select the distance from the center of the frame that you wish to include: [7]")
+        
+        if side_buffer == "":
+            side_buffer = 7
+            sb_needed = False
+        else:
+            try:
+                int(side_buffer)
+                sb_needed = False
+                side_buffer = int(side_buffer)
+            except:
+                print("Please pick a valid integer.")
+                
+    while ns_needed == True:
+        
+        num_stars = input("Please choose how many stars you wish to select for use in aspect correction: [50]")
+        
+        if num_stars == "":
+            num_stars = 50
+            ns_needed = False
+        else:
+            try:
+                int(num_stars)
+                ns_needed = False
+                num_stars = int(num_stars)
+            except:
+                print("Please pick a valid integer.")
+
+    return side_buffer, num_stars
+
 
 def detect_smeared_frames(tile_name):
 
