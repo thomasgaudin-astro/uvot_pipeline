@@ -467,6 +467,39 @@ def initialize_aspect_corrections():
 
     return side_buffer, num_stars
 
+def populate_observations_table(path_to_files, obs_table):
+
+    possible_bands = ['uvv', 'ubb', 'uuu', 'uw1', 'um2', 'uw2']
+
+    #get list of obsids. Remove the '.DS_Store' file that gets downloaded with data
+    all_filepaths = sorted(os.listdir(path_to_files))
+    if '.DS_Store' in all_filepaths:
+        all_filepaths.remove('.DS_Store')
+
+    counter = 0
+    for obsid in all_filepaths:
+        for band in possible_bands:
+
+            full_path = os.path.join(path_to_files, obsid, 'uvot', 'image', f'sw{obsid}{band}_sk.img.gz')
+            
+            if os.path.exists(full_path) == True:
+                hdul = fits.open(full_path)
+                num_snapshots = len(hdul) - 1
+
+                for ext in range(1, num_snapshots+1):
+                    obs_table.loc[counter, 'ObsID'] = obsid
+                    obs_table.loc[counter, 'Filter'] = band
+                    obs_table.loc[counter, 'Snapshot'] = ext
+                    obs_table.loc[counter, 'Smeared Flag'] = False
+                    obs_table.loc[counter, 'SSS Flag'] = False
+                    obs_table.loc[counter, 'AspCorr Flag'] = False
+
+                    counter += 1
+
+    print(f'Found {counter} snapshots that will be included in analysis.')
+    return obs_table
+
+    
 
 def detect_smeared_frames(tile_name):
 
