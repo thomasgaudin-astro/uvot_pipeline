@@ -416,6 +416,17 @@ def download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec):
         if query[ind].obsid in undownloaded_files:
             Data(obsid=query[ind].obsid, uvot=True, uksdc=True, outdir=f"~/S-CUBED/{tile_name}/UVOT")
 
+def download_uvot_data(source_name, source_ra, source_dec, rad):
+
+    #Run ObsQuery for all files in the region of the sky that we are interested in
+    query = ObsQuery(ra=source_ra, dec=source_dec, radius = rad)
+
+    #loop through all queried observations
+    #if obsid is in undownloaded_files, download the UVOT data for the observation
+    for ind, q in enumerate(query):
+        if q.exposure.total_seconds() > 30:
+            Data(obsid=query[ind].obsid, uvot=True, outdir=f"~/{source_name}/UVOT")
+
 
 def detect_smeared_frames(tile_name):
 
