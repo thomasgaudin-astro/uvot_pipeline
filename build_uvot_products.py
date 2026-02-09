@@ -111,7 +111,7 @@ while files_located == False:
         files_located = True
         
     else:
-        print("Please pick a valid option [Y/N]")
+        print("Please pick a valid option. [Y/N]")
 
 #insert aspect correction parameter initialization here
 side_buffer, num_stars = initialize_aspect_corrections()
