@@ -37,28 +37,13 @@ class DownloadError(Exception):
 
 
 def run_heasoft_command(command):
-    print(f"\n[SYSTEM]: Running HEASOFT command...")
-    
-    if HEASOFT_BACKEND == "wsl":
-        # --- This is YOUR working logic ---
-        full_cmd = f"conda activate henv && {command}"
-        result = subprocess.run(
-            ["wsl", "bash", "-ic", full_cmd],
-            text=True,
-            capture_output=True,
-        )
-        
-    elif HEASOFT_BACKEND == "native":
-        # --- This is the MAC lane ---
-        full_cmd = f"source $HEADAS/headas-init.sh && {command}"
-        result = subprocess.run(
-            ["bash", "-lc", full_cmd],
-            text=True,
-            capture_output=True,
-        )
-    else:
-        raise ValueError(f"Unknown HEASOFT_BACKEND: {HEASOFT_BACKEND}")
-
+        # --- This is for WSL 
+    full_cmd = f"conda activate henv && {command}"
+    result = subprocess.run(
+         ["wsl", "bash", "-ic", full_cmd],
+         text=True,
+         capture_output=True,
+    )
     if result.returncode != 0:
         print("  [RESULT]: FAILED")
         print("--- Error Details ---")   # Exists just to quick test if the code is working
@@ -67,6 +52,7 @@ def run_heasoft_command(command):
         print("  [RESULT]: SUCCESS")
 
     return result
+
 
 # --- UTILS FOR CROSS-PLATFORM PATHS ---
 
@@ -98,36 +84,39 @@ def find_obs_file(base_path, obsid, band, file_type='sk'):
                 return os.path.join(root, target_filename)
     return None
 
-def create_uvotdetect_command(source_path, output_path, exposure_path): #This wasnt working so I left it to just make it all in one function, could delete this.
+def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
+
+    # Construct bash command
+    bash_command = f"""
+    bash -c '
+    source {os.environ['HEADAS']}/headas-init.sh
+    uvotdetect \\
+        infile={source_path} \\
+        outfile={output_path} \\
+        expfile={exposure_path} \\
+        threshold=3 \\
+        sexfile=DEFAULT \\
+        plotsrc=NO \\
+        regfile={reg_path} \\
+        zerobkg=0.03 \\
+        expopt=BETA \\
+        calibrate=YES \\
+        clobber=YES
+    '
     """
-    Creates heredoc-style command for interactive uvotdetect.
-    """
-    src = prepare_path(source_path)
-    out = prepare_path(output_path)
-    exp = prepare_path(exposure_path)
-    
-    # Get directory to cd into
-    src_dir = os.path.dirname(src)
-    src_file = os.path.basename(src)
-    out_file = os.path.basename(out)
-    exp_value = "NONE" if exp == "NONE" else os.path.basename(exp)
-    
-    return (
-        f"cd '{src_dir}' && "
-        f"uvotdetect << end\n"
-        f"{src_file}\n"      # Input file
-        f"{out_file}\n"      # Output file
-        f"{exp_value}\n"     # Exposure map
-        f"3\n"               # Threshold
-        f"end"
-    )
 
     return bash_command
-###################################################################Updated above
+
+
+###################################################################Updated above  #MACOS UVOTDETECT version
 def run_uvotdetect(uvotdetect_command):
 
     # Run the command
-    result = run_heasoft_command(uvotdetect_command)
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
 
     # print("STDOUT:\n", result.stdout)
     # print("STDERR:\n", result.stderr)
@@ -137,14 +126,21 @@ def run_uvotdetect(uvotdetect_command):
 def run_uvotdetect_verbose(uvotdetect_command):
 
     # Run the command
-    result = run_heasoft_command(uvotdetect_command)
+    result = subprocess.run(
+        ['bash', '-i', '-c', uvotdetect_command],
+        capture_output=True,
+        text=True
+    )
 
     print("STDOUT:\n", result.stdout)
     print("STDERR:\n", result.stderr)
 
     return result.stdout
-#Because I couldnt get the above to work properly I am just hard codding in a way to do this forgive me
-def batch_run_uvotdetect(base_path):
+
+
+
+#WSL UVOTDETECT version
+def batch_run_uvotdetect_wsl(base_path):
     """
     Walks through base_path and runs uvotdetect on all SK files.
     """
@@ -1506,120 +1502,3 @@ def solve_orphan_frames_by_group(base_path=None, save_dir=None, return_data=Fals
     return automation_results if return_data else None
 
 
-def clean_up_data(automation_mode=False, base_path=None, save_path=None):
-    """  
-        automation_mode (bool): If True, skips GUI and print statements, returns data
-        base_path (str): Required if automation_mode=True
-        save_path (str): Required if automation_mode=True
-        
-        If automation_mode=True, then it will return:
-            - 'all_frames': DataFrame from IAC
-            - 'summary': Summary DataFrame from IAC  
-            - 'orphan_solutions': Dict of orphan solutions
-            - 'smeared_list': List of smeared observation folders
-    """
-    
-    if automation_mode:
-        # Automation mode - no prints (except errors)
-        if not base_path or not save_path:
-            raise ValueError("automation_mode requires base_path and save_path")
-    else:
-        # Interactive mode
-        root = tk.Tk()
-        root.withdraw()
-        
-        print("Please select the data directory using the popup window...")
-        base_path = filedialog.askdirectory(title="Select the Base Directory for Data Cleanup")
-        
-        if not base_path:
-            print("No directory selected. Aborting.")
-            return
-        
-        print(f"Selected Data Directory: {base_path}")
-        
-        print("\nPlease select where you want to save results...")
-        save_path = filedialog.askdirectory(title="Select Save Directory for Results")
-        
-        if not save_path:
-            print("No save directory selected. Using data directory as save location.")
-            save_path = base_path
-        
-        print(f"Selected Save Directory: {save_path}")
-    
-    # Initialize results dictionary for automation mode
-    results = {
-        'all_frames': None,
-        'summary': None,
-        'orphan_solutions': None,
-        'smeared_list': None
-    }
-    
-    # 1. RUN UVOT DETECT
-    if not automation_mode:
-        print("\n=== Running UVOT Detect ===")
-    batch_run_uvotdetect(base_path)
-    
-    # 2. DETECT SMEARED FRAMES
-    if not automation_mode:
-        print("\n=== Detecting Smeared Frames ===")
-    smeared_list = detect_smeared_frames(base_path)
-    results['smeared_list'] = smeared_list
-    
-    # 3. RUN IAC
-    if not automation_mode:
-        print("\n=== Running IAC Swift Automation ===")
-    all_frames, summary = swift_automation_mode(base_path=base_path, save_path=save_path)
-    results['all_frames'] = all_frames
-    results['summary'] = summary
-    
-    if all_frames is None or summary is None:
-        if not automation_mode:
-            print(" IAC automation failed to generate data.")
-    else:
-        # 4. SOLVE ORPHAN FRAMES
-        if not automation_mode:
-            print("\n=== Solving Orphan Frames ===")
-        
-        # In automation mode, return the data instead of saving CSVs
-        orphan_solutions = solve_orphan_frames_by_group(
-            base_path=base_path, 
-            save_dir=save_path, 
-            return_data=automation_mode,  # Return data in automation mode
-            input_df=all_frames,
-            input_summary=summary
-        )
-        results['orphan_solutions'] = orphan_solutions
-    
-    # 5. REMOVE SMEARED FRAMES
-    if smeared_list:
-        if not automation_mode:
-            print("\n=== Removing Smeared Frames ===")
-        remove_smeared(base_path, smeared_list)
-    else:
-        if not automation_mode:
-            print("\n=== No Smeared Frames to Remove ===")
-    
-    if not automation_mode:
-        print("\n=== Clean Up Data Process Complete ===")
-        print(f"Results saved to: {save_path}")
-        return None
-    else:
-        # Return all data for downstream processing
-        return results
-"""
-What you get in automation mode:
-results['all_frames'] - DataFrame with columns:
-OBSID, Band, RA, Dec, Full_Path, Filename, ASPCORR, Group_ID
-
-results['summary'] - DataFrame with columns:
-Group_ID, Band, Status, Total_Frames
-
-results['orphan_solutions'] - Dict like:
-{
-    "00010056003_um2": DataFrame([
-        {'OBSID': '...', 'RA': ..., 'Dec': ..., 'Full_Path': '...', 'Band': '...', 'ASPCORR': '...'},
-        # ... 4 reference frames (N, S, E, W)
-    ]),
-    # ... more orphans
-}
-"""
