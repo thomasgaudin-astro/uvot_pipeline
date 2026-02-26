@@ -6,6 +6,8 @@ import pandas as pd
 import numpy as np
 
 import math
+import time
+import gc
 
 import re
 
@@ -37,24 +39,34 @@ class DownloadError(Exception):
 
 
 def run_heasoft_command(command):
-        # --- This is for WSL 
-    full_cmd = f"conda activate henv && {command}"
-    result = subprocess.run(
-         ["wsl", "bash", "-ic", full_cmd],
-         text=True,
-         capture_output=True,
-    )
-    if result.returncode != 0:
-        print("  [RESULT]: FAILED")
-        print("--- Error Details ---")   # Exists just to quick test if the code is working
-        print(result.stderr)
+    """
+    Runs HEASOFT commands through the appropriate backend.
+    WSL ONLY - uses conda henv environment.
+    """
+    print(f"\n[SYSTEM]: Running HEASOFT command...")
+    
+    if HEASOFT_BACKEND == "wsl":
+        full_cmd = f"conda activate henv && {command}"
+        result = subprocess.run(
+            ["wsl", "bash", "-ic", full_cmd],
+            text=True,
+            capture_output=True,
+        )
+        
+        if result.returncode != 0:
+            print("  [RESULT]: FAILED")
+            print("--- Error Details ---")
+            print(result.stderr)
+        else:
+            print("  [RESULT]: SUCCESS")
+        
+        return result
+    
     else:
-        print("  [RESULT]: SUCCESS")
-
-    return result
+        raise NotImplementedError("backend not yet implemented for this function")
 
 
-# --- UTILS FOR CROSS-PLATFORM PATHS ---
+# UTILS FOR CROSS-PLATFORM PATHS 
 
 def prepare_path(path):
     """
@@ -141,102 +153,84 @@ def run_uvotdetect_verbose(uvotdetect_command):
 
 #WSL UVOTDETECT version
 def batch_run_uvotdetect_wsl(base_path):
-    """
-    Walks through base_path and runs uvotdetect on all SK files.
-    """
+    #Walks through base_path and runs uvotdetect on all SK files.
     
+# The six UVOT filter bands we care about
     BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
-    
+
     def get_extension_count(filepath):
-        """Get number of extensions using astropy."""
         try:
             with fits.open(filepath) as hdul:
                 return len(hdul) - 1
         except Exception as e:
             print(f"  Error reading FITS: {e}")
             return 0
-    
-    # Walk directory tree
+
+    print("\n" + "=" * 70)
+    print("BATCH UVOTDETECT")
+    print("=" * 70)
+
+    # Walk the entire directory tree under base_path, looking for directories named "image" 
     for root, dirs, files in os.walk(base_path):
         if os.path.basename(root) != "image":
             continue
-        
-        # Convert path for HEASOFT command 
+
+        # Convert the Windows path to a WSL-compatible path for HEASOFT
         img_dir_heasoft = prepare_path(root)
-        
+
         print(f"\n Processing image directory:")
-        print(f"   {root}")
-        
-        # Find all OBSID patterns in this directory
-        obsid_pattern = re.compile(r"sw(\d{11})([a-z0-9]+)_sk\.img\.gz") #Learned this method from a youtube video,a way to search the entire library for a spesific patern, really neat.
-        
+        print(f"{root}")
+
+        # Regex to match UVOT sky image filenames:
+        obsid_pattern = re.compile(r"sw(\d{11})([a-z0-9]+)_sk\.img\.gz")
+
         for file in files:
+            # Try to match the filename against the expected pattern
             match = obsid_pattern.match(file)
             if not match:
                 continue
-            
+
             OBSID, band = match.groups()
-            
+
+            # Skip non-UVOT bands (e.g. XRT files that might match the pattern and I did install some of those by accident. Also safty first.)
             if band not in BANDS:
                 continue
-            
+
             print(f"\n Found SK image: {file}")
-            
-            # Define output files
-            detect_base = f"{band}_detect.fits"
-            detect_path = os.path.join(root, detect_base)
-            
-            if os.path.exists(detect_path):
-                print("   Detect file already exists — skipping")
-                continue
-            
-            # Use find_obs_file to get the full path
+
+            # Use the helper function to get the full resolved path to the SK file
             sk_file_path = find_obs_file(base_path, OBSID, band, file_type='sk')
-            
+
             if not sk_file_path:
-                print(f"   Could not find SK file for OBSID={OBSID}, band={band}")
+                print(f" Could not find SK file for OBSID={OBSID}, band={band}")
                 continue
-            
-            # Get extension count
+
+            # Check how many image extensions the FITS file contains
             ext_count = get_extension_count(sk_file_path)
-            print(f"   {ext_count} image extensions found")
-            
-            # Prepare paths for HEASOFT
-            sk_file_heasoft = prepare_path(sk_file_path)
-            detect_base_heasoft = prepare_path(detect_path)
-            
-            # Get just the filenames for heredoc (cd handles the directory)
+            print(f" {ext_count} image extension(s) found")
+
+            # Get just the filename (no directory) for the HEASOFT command
             sk_filename = os.path.basename(sk_file_path)
-            detect_filename = os.path.basename(detect_path)
-            
-            # Single-extension case
-            if ext_count <= 1:
-                print("  Running single-extension detect...")
-                uvotdetect_cmd = (
-                    f"cd '{img_dir_heasoft}' && "
-                    f"uvotdetect << end\n"
-                    f"{sk_filename}\n"
-                    f"{detect_filename}\n"
-                    f"NONE\n"
-                    f"3\n"
-                    f"end"
-                )
-                run_heasoft_command(uvotdetect_cmd)
-            
-            # Multi-extension case
-            else:
+
+            if ext_count > 1:
+                # MULTI-EXTENSION: create a detect file for EACH extension
+                print(f" Creating detect files for {ext_count} extensions...")
+
                 for ext in range(1, ext_count + 1):
+                    # Name the output file with the extension number I.E. uw1_detect_ext1.fits, uw1_detect_ext2.fits
                     detect_ext = f"{band}_detect_ext{ext}.fits"
                     detect_ext_path = os.path.join(root, detect_ext)
-                    
+
+                    # Skip if this extension's detect file already exists
                     if os.path.exists(detect_ext_path):
-                        print(f"   Extension {ext} detect exists — skipping")
+                        print(f" Extension {ext} detect exists — skipping")
                         continue
-                    
-                    print(f"   Running detect on extension {ext}")
-                    
+
+                    print(f" Running detect on extension {ext}")
+
                     detect_ext_filename = os.path.basename(detect_ext_path)
-                    
+
+                    #the uvotdetect command.
                     uvotdetect_cmd = (
                         f"cd '{img_dir_heasoft}' && "
                         f"uvotdetect << end\n"
@@ -247,20 +241,33 @@ def batch_run_uvotdetect_wsl(base_path):
                         f"end"
                     )
                     run_heasoft_command(uvotdetect_cmd)
-    
-    print("\n UVOT Detect processing complete!")
-    
-    
-def create_fkeyprint_bash_command(source_path):
 
-    fits_path = prepare_path(source_path)
-    
-    # print("Absolute path:", fits_path)
-    # print("Exists:", os.path.exists(fits_path))  # Confirm it actually exists!
-    
-    keyword = "ASPCORR"
-    
-    return f'fkeyprint infile="{fits_path}" keyname={keyword}'
+            else:
+                # SINGLE EXTENSION: create one detect file for the band, I.E. uw1_detect.fits
+                detect_base = f"{band}_detect.fits"
+                detect_path = os.path.join(root, detect_base)
+
+                if os.path.exists(detect_path):
+                    print(" Detect file already exists — skipping")
+                    continue
+
+                detect_filename = os.path.basename(detect_path)
+
+                print(" Running single-extension detect...")
+
+                # No [ext] suffix needed the whole file is one extension
+                uvotdetect_cmd = (
+                    f"cd '{img_dir_heasoft}' && "
+                    f"uvotdetect << end\n"
+                    f"{sk_filename}\n"
+                    f"{detect_filename}\n"
+                    f"NONE\n"
+                    f"3\n"
+                    f"end"
+                )
+                run_heasoft_command(uvotdetect_cmd)
+
+    print("\n UVOT Detect processing complete!")
 
 def run_fkeyprint(fkeyprint_command):
 
@@ -307,6 +314,143 @@ def run_fappend_verbose(fappend_command):
 
     return result.stdout
 ####################################################################################
+############################################ Bellow is unicorr for Windows 
+
+def create_uvotunicorr_command_wsl(ref_frame, obs_frame, obspath=None):
+    """
+    Creates uvotunicorr command for aspect correction (single band/snapshot version).
+    
+    Args:
+        ref_frame: Reference frame OBSID
+        obs_frame: Observation frame OBSID to be corrected
+        obspath: Path to the observation directory (optional)
+    
+    Returns:
+        Command string ready for run_heasoft_command()
+    """
+    
+    # Build file paths (default to uw1, extension 1)
+    if obspath:
+        ref_filepath = os.path.join(obspath, f'sw{ref_frame}uw1_sk.img')
+        obs_filepath = os.path.join(obspath, f'sw{obs_frame}uw1_sk.img')
+        ref_reg_filepath = os.path.join(obspath, 'ref.reg')
+        obs_reg_filepath = os.path.join(obspath, 'obs.reg')
+    else:
+        ref_filepath = f'sw{ref_frame}uw1_sk.img'
+        obs_filepath = f'sw{obs_frame}uw1_sk.img'
+        ref_reg_filepath = 'ref.reg'
+        obs_reg_filepath = 'obs.reg'
+    
+    # Convert paths for WSL if needed
+    if HEASOFT_BACKEND == "wsl":
+        ref_filepath = prepare_path(ref_filepath)
+        obs_filepath = prepare_path(obs_filepath)
+        ref_reg_filepath = prepare_path(ref_reg_filepath)
+        obs_reg_filepath = prepare_path(obs_reg_filepath)
+    
+    # Add extension [1] after path conversion
+    ref_filepath += '[1]'
+    obs_filepath += '[1]'
+    
+    # Build the command
+    command = (
+        f"uvotunicorr "
+        f"obsfile={obs_filepath} "
+        f"reffile={ref_filepath} "
+        f"obsreg={obs_reg_filepath} "
+        f"refreg={ref_reg_filepath}"
+    )
+    
+    return command
+
+
+def create_uvotunicorr_full_command_wsl(ref_frame, obs_frame, band, ref_snapshot, obs_snapshot, obspath=None):
+    """
+    WSL version of uvotunicorr command creator.
+    
+    Args:
+        ref_frame: Reference ObsID
+        obs_frame: Observation ObsID  
+        band: Filter band
+        ref_snapshot: Extension number for REFERENCE
+        obs_snapshot: Extension number for OBSERVATION
+        obspath: Directory path
+    """
+    
+    # Build file paths
+    if obspath:
+        ref_filepath = os.path.join(obspath, f'sw{ref_frame}{band}_sk.img')
+        obs_filepath = os.path.join(obspath, f'sw{obs_frame}{band}_sk.img')
+        ref_reg_filepath = os.path.join(obspath, 'ref.reg')
+        obs_reg_filepath = os.path.join(obspath, 'obs.reg')
+    else:
+        ref_filepath = f'sw{ref_frame}{band}_sk.img'
+        obs_filepath = f'sw{obs_frame}{band}_sk.img'
+        ref_reg_filepath = 'ref.reg'
+        obs_reg_filepath = 'obs.reg'
+    
+    # Convert paths for WSL
+    ref_filepath = prepare_path(ref_filepath)
+    obs_filepath = prepare_path(obs_filepath)
+    ref_reg_filepath = prepare_path(ref_reg_filepath)
+    obs_reg_filepath = prepare_path(obs_reg_filepath)
+    
+    # Add DIFFERENT extensions for ref vs obs
+    ref_filepath += f'[{ref_snapshot}]'  # Use ref's extension
+    obs_filepath += f'[{obs_snapshot}]'  # Use obs's extension, the used to be matching that was a bad idea.
+    
+    # Build command
+    command = (
+        f"uvotunicorr "
+        f"obsfile='{obs_filepath}' "
+        f"reffile='{ref_filepath}' "
+        f"obsreg='{obs_reg_filepath}' "
+        f"refreg='{ref_reg_filepath}'"
+    )
+    
+    return command
+
+
+def run_uvotunicorr_wsl(uvotunicorr_command):
+    """
+    WSL-specific runner for uvotunicorr.
+    
+    Returns:
+        subprocess.CompletedProcess object (NOT stdout string)
+    """
+    
+    if HEASOFT_BACKEND != "wsl":
+        print(f"[SKIP]: uvotunicorr_wsl only works with WSL backend")
+        return None
+    
+    # Return the full result object, not just stdout, unicorr cant read that apperently
+    result = run_heasoft_command(uvotunicorr_command)
+    return result  
+
+
+def run_uvotunicorr_wsl_verbose(uvotunicorr_command):
+    """
+    WSL-specific verbose runner for uvotunicorr.
+    
+    Returns:
+        subprocess.CompletedProcess object
+    """
+    
+    if HEASOFT_BACKEND != "wsl":
+        print(f"[SKIP]: uvotunicorr_wsl only works with WSL backend")
+        return None
+    
+    result = run_heasoft_command(uvotunicorr_command)
+    
+    if result:
+        print("STDOUT:\n", result.stdout)
+        print("STDERR:\n", result.stderr)
+    
+    return result  # Return full object
+
+
+
+##################################### Bellow is unicorr for MACOS 
 def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
     if obspath:
@@ -1139,27 +1283,65 @@ def read_xrt_data(source_name):
 
 #So what we now do instead is a scan the FITS file itself for the extension and read the proper sheet. I.E. the fits files themselves have extension as the photos do so they may have-- Sheet 0 (Primary) Sheet 1(Image) Sheet 2(Image), etc.
 # So we will have to Loop through all sheets for our hunt
-def _scan_header_for_aspcorr(file_path):
+def _scan_header_for_aspcorr_per_extension(file_path):
     """
-    Scans for mixed DIRECT and NONE statuses.
-    If both exist, it is a 'READYRESUM' (needs fix + re-summing).
+    Returns a list of ASPCORR statuses, one per image extension.
+    Used for building the detailed observations table.
+    
+    UPDATED: Now recognizes UNICORR as a corrected status
     """
-    if not file_path: return "NONE"
+    if not file_path:
+        return []
+    
     try:
         with fits.open(file_path) as hdul:
-            # We use a set to get only unique statuses across all sheets (extensions)
+            statuses = []
+            for hdu in hdul:
+                # Only process image extensions (skip primary header with NAXIS=0)
+                naxis = hdu.header.get('NAXIS', 0)
+                if naxis >= 2:
+                    val = hdu.header.get('ASPCORR', 'NONE')
+                    status = str(val).strip().upper()
+                    
+                    # Treat UNICORR as DIRECT (both are corrected)
+                    if status == 'UNICORR':
+                        status = 'DIRECT'
+                    
+                    statuses.append(status)
+            return statuses
+    except:
+        return []
+
+
+def _scan_header_for_aspcorr(file_path):
+    """
+    Original function - returns overall status for the file.
+    If both DIRECT and NONE exist across extensions, returns 'READYRESUM'.
+    
+    UPDATED: Now recognizes UNICORR as a corrected status
+    """
+    if not file_path:
+        return "NONE"
+    
+    try:
+        with fits.open(file_path) as hdul:
             statuses = set()
             for hdu in hdul:
                 val = hdu.header.get('ASPCORR', 'NONE')
-                statuses.add(str(val).strip().upper())
+                status = str(val).strip().upper()
+                
+                # Treat UNICORR as DIRECT for grouping purposes
+                if status == 'UNICORR':
+                    status = 'DIRECT'
+                
+                statuses.add(status)
             
-            # --- THE READYRESUM LOGIC ---
-            # If it has some good and some bad, it's Ready to be fixed then Re-Summed.
+            # READYRESUM logic
             if 'DIRECT' in statuses and 'NONE' in statuses:
                 return 'READYRESUM'
-            if 'NONE' in statuses: 
+            if 'NONE' in statuses:
                 return 'NONE'
-            if 'DIRECT' in statuses: 
+            if 'DIRECT' in statuses:
                 return 'DIRECT'
             return "NONE"
     except:
@@ -1502,3 +1684,175 @@ def solve_orphan_frames_by_group(base_path=None, save_dir=None, return_data=Fals
     return automation_results if return_data else None
 
 
+######################################################################################
+#Bellow is testing for populating table bads.
+def populate_observations_table(base_path, all_frames_df, summary_df):
+    """
+    Populates observations table with one row per OBSID+Band+Extension.
+    """
+    
+    possible_bands = ['uvv', 'ubb', 'uuu', 'uw1', 'um2', 'uw2']
+    
+    # Initialize empty DataFrame
+    obs_table = pd.DataFrame(columns=[
+        'ObsID', 'Filter', 'Snapshot', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag',
+        'Group_ID', 'Group_Status', 'Extension_Status', 'File_Status', 
+        'RA', 'Dec', 'Full_Path'
+    ])
+    
+    # Get list of obsids - remove '.DS_Store' file
+    all_filepaths = sorted(os.listdir(base_path))
+    if '.DS_Store' in all_filepaths:
+        all_filepaths.remove('.DS_Store')
+    
+    counter = 0
+    
+    for obsid_folder in all_filepaths:
+        # Skip non-directory items
+        if not os.path.isdir(os.path.join(base_path, obsid_folder)):
+            continue
+        
+        # Extract OBSID from folder name (handles format like "00010056003_2024-01-15_10-30-45" so i dont have to change my logic yet)
+        match = re.search(r'(\d{11})', obsid_folder)
+        if not match:
+            continue
+        
+        obsid = match.group(1)
+        
+        for band in possible_bands:
+            full_path = os.path.join(base_path, obsid_folder, obsid, 'uvot', 'image', f'sw{obsid}{band}_sk.img.gz')
+            
+            if os.path.exists(full_path):
+                # Open FITS file to count extensions
+                hdul = fits.open(full_path)
+                num_snapshots = len(hdul) - 1  # Subtract 1 for primary HDU
+                
+                # Get per-extension ASPCORR statuses
+                extension_statuses = _scan_header_for_aspcorr_per_extension(full_path)
+                
+                # Get overall file status
+                file_status = _scan_header_for_aspcorr(full_path)
+                
+                # Get RA/Dec and Group_ID from all_frames_df
+                frame_info = all_frames_df[
+                    (all_frames_df['OBSID'] == obsid) & 
+                    (all_frames_df['Band'] == band)
+                ]
+                
+                if frame_info.empty:
+                    ra, dec, group_id = None, None, -1
+                else:
+                    ra = frame_info.iloc[0]['RA']
+                    dec = frame_info.iloc[0]['Dec']
+                    group_id = frame_info.iloc[0]['Group_ID']
+                
+                # Get group status from summary
+                group_status = "UNKNOWN"
+                if group_id != -1:
+                    group_info = summary_df[
+                        (summary_df['Group_ID'] == group_id) & 
+                        (summary_df['Band'] == band)
+                    ]
+                    if not group_info.empty:
+                        group_status = group_info.iloc[0]['Status']
+                
+                
+                # Process each extension (snapshot)
+                for ext in range(1, num_snapshots + 1):
+                    # Get extension-specific status
+                    ext_status = extension_statuses[ext - 1] if (ext - 1) < len(extension_statuses) else 'NONE'
+                                
+                    # Determine AspCorr Flag (True if extension has DIRECT correction)
+                    aspcorr_flag = (ext_status == 'DIRECT')
+                    
+                    # Add row to table
+                    obs_table.loc[counter, 'ObsID'] = obsid
+                    obs_table.loc[counter, 'Filter'] = band
+                    obs_table.loc[counter, 'Snapshot'] = ext
+                    obs_table.loc[counter, 'Smeared Flag'] = False  # Will be updated later
+                    obs_table.loc[counter, 'SSS Flag'] = False  # Placeholder
+                    obs_table.loc[counter, 'AspCorr Flag'] = aspcorr_flag
+                    obs_table.loc[counter, 'Group_ID'] = group_id
+                    obs_table.loc[counter, 'Group_Status'] = group_status
+                    obs_table.loc[counter, 'Extension_Status'] = ext_status
+                    obs_table.loc[counter, 'File_Status'] = file_status
+                    obs_table.loc[counter, 'RA'] = ra
+                    obs_table.loc[counter, 'Dec'] = dec
+                    obs_table.loc[counter, 'Full_Path'] = full_path
+                    
+                    counter += 1
+                
+                hdul.close()
+    
+    print(f'Found {counter} snapshots that will be included in analysis.')
+    return obs_table
+
+
+def update_smeared_flags(obs_table, smeared_list):
+    """
+    Updates the Smeared Flag column based on the smeared_list.
+    """
+    if not smeared_list:
+        return obs_table
+    
+    print(f"\nUpdating smeared flags for {len(smeared_list)} observations...")
+    
+    for smeared_folder in smeared_list:
+        # Extract OBSID from folder name
+        match = re.search(r'(\d{11})', smeared_folder)
+        if match:
+            obsid = match.group(1)
+            # Mark all extensions of this OBSID as smeared, as that is what we are doing to the smeared now..... NEED TO FIX THIS LATER THIS IS A STOP GAP BECAUSE I AM LAZY.
+            obs_table.loc[obs_table['ObsID'] == obsid, 'Smeared Flag'] = True  #Changes to True
+            print(f"  Marked {obsid} as smeared")
+    
+    return obs_table
+    
+
+def refresh_observations_table_after_correction(obs_table, corrected_obsids, band):
+    """
+    Updates the obs_table after corrections to reflect new ASPCORR status.
+    
+    Args:
+        obs_table: Original observations DataFrame
+        corrected_obsids: List of (obsid, snapshot) tuples that were corrected
+        band: Band that was corrected
+    
+    Returns:
+        Updated obs_table
+    """
+    for obsid, snapshot in corrected_obsids:
+        # Find the row(s) to update
+        mask = (obs_table['ObsID'] == obsid) & \
+               (obs_table['Filter'] == band) & \
+               (obs_table['Snapshot'] == snapshot)
+        
+        if mask.any():
+            # Get the file path to re-read ASPCORR
+            file_path = obs_table.loc[mask, 'Full_Path'].iloc[0]
+            
+            # Re-read the extension status
+            try:
+                if file_path.endswith('.gz'):
+                    img_path = file_path[:-3]
+                else:
+                    img_path = file_path
+                
+                if os.path.exists(img_path):
+                    with fits.open(img_path) as hdul:
+                        if snapshot < len(hdul):
+                            aspcorr = hdul[snapshot].header.get('ASPCORR', 'NONE')
+                            aspcorr = str(aspcorr).strip().upper()
+                            
+                            # Treat UNICORR as DIRECT
+                            if aspcorr == 'UNICORR':
+                                aspcorr = 'DIRECT'
+                            
+                            # Update table
+                            obs_table.loc[mask, 'Extension_Status'] = aspcorr
+                            obs_table.loc[mask, 'AspCorr Flag'] = (aspcorr == 'DIRECT')
+                            
+            except Exception as e:
+                print(f"    Warning: Could not update table for {obsid} ext {snapshot}: {e}")
+    
+    return obs_table
