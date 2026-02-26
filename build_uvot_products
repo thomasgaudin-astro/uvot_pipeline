@@ -132,9 +132,9 @@ def setup_data_directories():
     root.withdraw()
     
     if choice == '1':
-        # ====================================================================
-        # OPTION 1: USE EXISTING DATA YOU ALREADY HAVE
-        # ====================================================================
+        ###################################################################### 
+        # OPTION 1: Use data you already have
+        ###################################################################### 
         print("\n" + "-"*70)
         print("SELECT EXISTING DATA DIRECTORY")
         print("-"*70)
@@ -162,18 +162,17 @@ def setup_data_directories():
         
         print(f"Save Directory: {save_directory}")
         
-        # ====================================================================
+        ###################################################################### 
         # Save Paths global
-        # ====================================================================
         DATA_DIRECTORY = data_directory
         SAVE_DIRECTORY = save_directory
 
         return data_directory, save_directory
     
     else:
-        # ====================================================================
-        # OPTION 2: DOWNLOAD NEW DATA
-        # ==================================================================== 
+        ###################################################################### 
+        # OPTION 2: Download It new
+        ######################################################################  
         print("\n" + "-"*70)
         print("DOWNLOAD NEW SWIFT DATA")
         print("-"*70)
@@ -300,9 +299,9 @@ def setup_data_directories():
         print(f"Total observations downloaded: {total_obs}")
         print(f"Data location: {data_directory}")
 
-        # ====================================================================
+        ###################################################################### 
         # Save Paths global
-        # ====================================================================
+        ###################################################################### 
         DATA_DIRECTORY = data_directory
         SAVE_DIRECTORY = save_directory
 
@@ -318,6 +317,9 @@ def setup_data_directories():
 #insert aspect correction parameter initialization here
 
 master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+
+
+
 
 
 ###########################################################################################################################################
@@ -336,6 +338,7 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
             - 'summary': Summary DataFrame from IAC  
             - 'orphan_solutions': Dict of orphan solutions
             - 'smeared_list': List of smeared observation folders
+            - 'observations_table': Detailed per-extension table
     """
 
 # SETUP: Get paths from arguments, globals, or config file
@@ -397,7 +400,8 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
         'all_frames': None,
         'summary': None,
         'orphan_solutions': None,
-        'smeared_list': None
+        'smeared_list': None,
+        'observations_table': None
     }
     
     # 1. RUN UVOT DETECT
@@ -440,10 +444,42 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
     results['all_frames'] = all_frames
     results['summary'] = summary
     
+    # ADDED: Save the summary CSV (swift_automation_mode doesn't do this)
+    if summary is not None:
+        summary_path = os.path.join(save_path, "workload_summary.csv")
+        summary.to_csv(summary_path, index=False)
+        if not automation_mode:
+            print(f"✓ Workload summary saved to: {summary_path}")
+    
     if all_frames is None or summary is None:
         if not automation_mode:
-            print(" IAC automation failed to generate data.")
+            print("⚠️ IAC automation failed to generate data.")
     else:
+        # 3.5. POPULATE OBSERVATIONS TABLE
+        if not automation_mode:
+            print("\n=== Populating Observations Table ===")
+        
+        try:
+            obs_table = populate_observations_table(base_path, all_frames, summary)
+            
+            # Update smeared flags
+            if results['smeared_list']:
+                obs_table = update_smeared_flags(obs_table, results['smeared_list'])
+            
+            results['observations_table'] = obs_table
+            
+            # Save table to CSV
+            table_path = os.path.join(save_path, "observations_table.csv")
+            obs_table.to_csv(table_path, index=False)
+            
+            if not automation_mode:
+                print(f" Observations table saved to: {table_path}")
+                print(f" Total entries: {len(obs_table)}")
+        
+        except Exception as e:
+            print(f" Failed to populate observations table: {e}")
+            import traceback
+            traceback.print_exc()
         # 4. SOLVE ORPHAN FRAMES
         if not automation_mode:
             print("\n=== Solving Orphan Frames ===")
@@ -493,3 +529,146 @@ results['orphan_solutions'] - Dict like:
 """
 
 ######################################################################################################################################## End of Clean up
+
+
+
+
+
+
+
+
+############################################################################# 
+# The final command that will one day run everything for download to  cleanup to graphs.
+def run_uvot_pipeline():
+    
+    print("\n" + "="*70)
+    print("SWIFT UVOT COMPLETE PIPELINE")
+    print("="*70)
+    
+    ####################################################################################
+    #1: SETUP DATA DIRECTORIES
+    print("\n[PIPELINE STEP 1/3] Setting up data directories...")
+    
+    data_dir, save_dir = setup_data_directories()
+    
+    if data_dir is None or save_dir is None:
+        print("\n❌ruh-roh: Setup failed.")
+        return
+    
+    ####################################################################################
+    #secound thing to do: Run Cleanup (UVOTDETECT, SMEARED, IAC, ORPHAN)
+    print("\n[PIPELINE STEP 2/3] Running data cleanup...")
+    
+    results = clean_up_data(
+        automation_mode=True,
+        base_path=data_dir,
+        save_path=save_dir
+    )
+    
+    if results is None or results['observations_table'] is None:
+        print("\n❌ruh-roh: Cleanup failed.")
+        return
+    
+    obs_table = results['observations_table']
+    
+    ####################################################################################
+    #Big 3: RUN AUTOMATED ASPECT CORRECTION
+    print("\n[PIPELINE STEP 3/3] Running automated aspect correction...")
+    
+    # Ask user for parameters
+    print("\nAspect Correction Parameters:")
+    
+    sb_needed = True
+    while sb_needed:
+        side_buffer = input("  Distance from center to include (arcmin): [7] ")
+        if side_buffer == "":
+            side_buffer = 7
+            sb_needed = False
+        else:
+            try:
+                side_buffer = int(side_buffer)
+                sb_needed = False
+            except:
+                print("  Please pick a valid integer.")
+    
+    ns_needed = True
+    while ns_needed:
+        num_stars = input("  Number of stars to use: [50] ")
+        if num_stars == "":
+            num_stars = 50
+            ns_needed = False
+        else:
+            try:
+                num_stars = int(num_stars)
+                ns_needed = False
+            except:
+                print("  Please pick a valid integer.")
+    
+    # Run aspect correction
+    aspectnone_dict, aspectnone_tiles_dict = automated_aspect_correction(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        side_buffer=side_buffer,
+        num_stars=num_stars
+    )
+    
+    # Check if we need another pass
+    if aspectnone_dict and sum(aspectnone_dict.values()) > 0:
+        print(f"\n⚠️  {sum(aspectnone_dict.values())} frames still need correction")
+        
+        ga = False
+        while ga == False:
+            go_again = input("\nTry again with different parameters? [Y/N]: ")
+            
+            if go_again.upper() == 'Y':
+                print("\nStarting another correction pass...")
+                
+                # Reload updated obs_table
+                table_path = os.path.join(save_dir, "observations_table.csv")
+                obs_table = pd.read_csv(table_path)
+                
+                # Run again with new parameters
+                aspectnone_dict, aspectnone_tiles_dict = automated_aspect_correction(
+                    obs_table=obs_table,
+                    base_path=data_dir,
+                    save_path=save_dir,
+                    side_buffer=side_buffer,
+                    num_stars=num_stars
+                )
+                
+                if sum(aspectnone_dict.values()) == 0:
+                    print("\n✓ All corrections complete!")
+                    ga = True
+                
+            elif go_again.upper() == 'N':
+                print("\nExiting pipeline. Saving bad frames report...")
+                
+                # Save bad frames CSV (like original)
+                bad_frames = pd.DataFrame.from_dict(
+                    aspectnone_tiles_dict,
+                    orient='index'
+                )
+                bad_frames_path = os.path.join(save_dir, 'bad_frames.csv')
+                bad_frames.to_csv(bad_frames_path)
+                
+                print(f"✓ Bad frames report saved to: {bad_frames_path}")
+                ga = True
+            else:
+                print("Please pick a valid option. [Y/N]")
+    
+    ###########################################################################
+    # FINAL SUMMARY
+
+    print("\n" + "="*70)
+    print("PIPELINE COMPLETE")
+    print("="*70)
+    print(f"Data directory: {data_dir}")
+    print(f"Save directory: {save_dir}")
+    print("\nGenerated files:")
+    print(f"  - observations_table.csv")
+    print(f"  - workload_summary.csv")
+    print(f"  - orphan_frames/ (if applicable)")
+    if aspectnone_dict and sum(aspectnone_dict.values()) > 0:
+        print(f"  - bad_frames.csv")
+    print("="*70)
