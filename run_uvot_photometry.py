@@ -242,6 +242,8 @@ for obs in tqdm(all_target_filepaths):
         else:
             source_data = data_array
 
+        print(source_data)
+
 # Sort DataFrame by Time    
 source_data = source_data.sort_values('MET', ascending=True)
 source_data = source_data.reset_index(drop=True)
