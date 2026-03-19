@@ -254,6 +254,9 @@ source_data['MAG_ERR'] = source_data['MAG_ERR'].astype(float)
 source_data['MET'] = source_data['MET'].astype(float)
 source_data['EXPOSURE'] = source_data['EXPOSURE'].astype(float)
 
+for val in source_data.index:
+    print(type(source_data.loc[val, 'MET']))
+
 # Convert MET values into MJD values
 cc = Clock()
 
