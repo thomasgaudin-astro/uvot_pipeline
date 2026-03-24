@@ -329,9 +329,9 @@ master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type'
 
 def clean_up_data(automation_mode=False, base_path=None, save_path=None):
     """  
-        automation_mode (bool): If True, skips GUI and print statements, returns data
-        base_path (str): Required if automation_mode=True
-        save_path (str): Required if automation_mode=True
+        automation_mode : If True, skips GUI and print statements, returns data
+        base_path : Required if automation_mode=True
+        save_path : Required if automation_mode=True
         
         If automation_mode=True, then it will return:
             - 'all_frames': DataFrame from IAC
@@ -412,7 +412,7 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
         if HEASOFT_BACKEND == "wsl":
             batch_run_uvotdetect_wsl(base_path) #WSL Version
         else:
-            run_uvotdetect_mac(base_path)  # Input the MACOS version, currently not working
+            run_uvotdetect_mac(base_path)  # Input the MACOS version, currently not working I think
         
         if not automation_mode:
             print(" UVOTDETECT complete")
@@ -449,7 +449,7 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
         summary_path = os.path.join(save_path, "workload_summary.csv")
         summary.to_csv(summary_path, index=False)
         if not automation_mode:
-            print(f"✓ Workload summary saved to: {summary_path}")
+            print(f"✅ Workload summary saved to: {summary_path}")
     
     if all_frames is None or summary is None:
         if not automation_mode:
@@ -510,77 +510,61 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
     else:
         # Return all data for downstream processing
         return results
-"""
-What you get in automation mode:
-results['all_frames'] - DataFrame with columns:
-OBSID, Band, RA, Dec, Full_Path, Filename, ASPCORR, Group_ID
-
-results['summary'] - DataFrame with columns:
-Group_ID, Band, Status, Total_Frames
-
-results['orphan_solutions'] - Dict like:
-{
-    "00010056003_um2": DataFrame([
-        {'OBSID': '...', 'RA': ..., 'Dec': ..., 'Full_Path': '...', 'Band': '...', 'ASPCORR': '...'},
-        # ... 4 reference frames (N, S, E, W)
-    ]),
-    # ... more orphans
-}
-"""
 
 ######################################################################################################################################## End of Clean up
 
 
-
-
-
-
-
-
-############################################################################# 
-# The final command that will one day run everything for download to  cleanup to graphs.
 def run_uvot_pipeline():
-    
-    print("\n" + "="*70)
+    """
+    Complete Swift UVOT processing pipeline.
+    """
+
+    print("\n" + "=" * 70)
     print("SWIFT UVOT COMPLETE PIPELINE")
-    print("="*70)
-    
-    ####################################################################################
-    #1: SETUP DATA DIRECTORIES
-    print("\n[PIPELINE STEP 1/3] Setting up data directories...")
-    
+    print("=" * 70)
+
+    print("\n" + "=" * 70)
+    print("SWIFT UVOT COMPLETE PIPELINE")
+    print("=" * 70)
+ 
+    #####################################################################
+    # STEP 1: SETUP DATA DIRECTORIES
+    print("\n[PIPELINE STEP 1/4] Setting up data directories...")
+ 
     data_dir, save_dir = setup_data_directories()
-    
+ 
     if data_dir is None or save_dir is None:
-        print("\n❌ruh-roh: Setup failed.")
+        print("\n❌ Ruh-Roh-Setup failed.")
         return
-    
-    ####################################################################################
-    #secound thing to do: Run Cleanup (UVOTDETECT, SMEARED, IAC, ORPHAN)
-    print("\n[PIPELINE STEP 2/3] Running data cleanup...")
-    
+ 
+    #####################################################################
+    # STEP 2: DATA CLEANUP
+
+    print("\n[PIPELINE STEP 2/4] Running data cleanup...")
+ 
     results = clean_up_data(
         automation_mode=True,
         base_path=data_dir,
-        save_path=save_dir
+        save_path=save_dir,
     )
-    
-    if results is None or results['observations_table'] is None:
-        print("\n❌ruh-roh: Cleanup failed.")
+ 
+    if results is None or results["observations_table"] is None:
+        print("\n❌ Ruh-Roh-Cleanup failed.")
         return
-    
-    obs_table = results['observations_table']
-    
-    ####################################################################################
-    #Big 3: RUN AUTOMATED ASPECT CORRECTION
-    print("\n[PIPELINE STEP 3/3] Running automated aspect correction...")
-    
-    # Ask user for parameters
+ 
+    obs_table = results["observations_table"]
+ 
+    #####################################################################
+    # STEP 3: AUTOMATED ASPECT CORRECTION
+
+    print("\n[PIPELINE STEP 3/4] Running automated aspect correction...")
+ 
     print("\nAspect Correction Parameters:")
-    
+ 
+    # --- side_buffer ---
     sb_needed = True
     while sb_needed:
-        side_buffer = input("  Distance from center to include (arcmin): [7] ")
+        side_buffer = input("Distance from center to include (arcmin): [7] ")
         if side_buffer == "":
             side_buffer = 7
             sb_needed = False
@@ -588,12 +572,13 @@ def run_uvot_pipeline():
             try:
                 side_buffer = int(side_buffer)
                 sb_needed = False
-            except:
+            except ValueError:
                 print("  Please pick a valid integer.")
-    
+ 
+    # --- num_stars ---
     ns_needed = True
     while ns_needed:
-        num_stars = input("  Number of stars to use: [50] ")
+        num_stars = input("Number of stars to use: [50] ")
         if num_stars == "":
             num_stars = 50
             ns_needed = False
@@ -601,74 +586,235 @@ def run_uvot_pipeline():
             try:
                 num_stars = int(num_stars)
                 ns_needed = False
-            except:
-                print("  Please pick a valid integer.")
-    
-    # Run aspect correction
+            except ValueError:
+                print("Please pick a valid integer.")
+ 
+    # Run aspect correction (includes its own retry loop)
     aspectnone_dict, aspectnone_tiles_dict = automated_aspect_correction(
         obs_table=obs_table,
         base_path=data_dir,
         save_path=save_dir,
         side_buffer=side_buffer,
-        num_stars=num_stars
+        num_stars=num_stars,
     )
+ 
+ 
+    ####################################################################
+    # STEP 3.5: QUARANTINE UNUSABLE OBSERVATIONS
+    # Before uvotsource runs, we move observations that are completely
+    # unusable out of the data directory.  Two categories:
+    #
+    #   1. ORPHAN frames -> moved to "Orphans/" subfolder
+    #      These have no nearby DIRECT reference to correct against. and that isnt setup yet
+    #
+    #   2. Fully uncorrected (ALL extensions NONE on ALL bands) → "NotASPCORR/"
+    #      Aspect correction was attempted but failed on every extension.
+    #
+    # Partially-corrected observations (mix of DIRECT and NONE extensions)
+    # are KEPT in place.  The summation step (4c) will use uvotimsum's
+    # exclude parameter to skip the NONE extensions and only sum the
+    # corrected ones, so the resulting summed image is clean. At least it should.
+
+    print("\n" + "=" * 70)
+    print("STEP 3.5: QUARANTINING UNUSABLE OBSERVATIONS")
+    print("=" * 70)
+ 
+    # Set up quarantine directories
+    not_aspcorr_dir = os.path.join(data_dir, "NotASPCORR")
+    orphans_dir = os.path.join(data_dir, "Orphans")
+    os.makedirs(not_aspcorr_dir, exist_ok=True)
+    os.makedirs(orphans_dir, exist_ok=True)
+ 
+    # Folders we never touch (already quarantined or special)
+    QUARANTINE_FOLDERS = {"Smeared", "NotASPCORR", "Orphans"}
+ 
+    obsid_pattern = re.compile(r"(\d{11})")
+ 
+    ################################################################
+    # 3.5a: MOVE ORPHAN OBSERVATIONS
+    # Collect orphan OBSIDs from the obs_table.
+    # This includes:
+    #   - Group_Status == 'ORPHAN' (couldn't be grouped spatially)
+    #   - Group_ID == -1 (never matched into all_frames_df at all)
+    #   - Group_Status == 'UNKNOWN' (populate_observations_table
     
-    # Check if we need another pass
-    if aspectnone_dict and sum(aspectnone_dict.values()) > 0:
-        print(f"\n⚠️  {sum(aspectnone_dict.values())} frames still need correction")
-        
-        ga = False
-        while ga == False:
-            go_again = input("\nTry again with different parameters? [Y/N]: ")
-            
-            if go_again.upper() == 'Y':
-                print("\nStarting another correction pass...")
-                
-                # Reload updated obs_table
-                table_path = os.path.join(save_dir, "observations_table.csv")
-                obs_table = pd.read_csv(table_path)
-                
-                # Run again with new parameters
-                aspectnone_dict, aspectnone_tiles_dict = automated_aspect_correction(
-                    obs_table=obs_table,
-                    base_path=data_dir,
-                    save_path=save_dir,
-                    side_buffer=side_buffer,
-                    num_stars=num_stars
-                )
-                
-                if sum(aspectnone_dict.values()) == 0:
-                    print("\n✓ All corrections complete!")
-                    ga = True
-                
-            elif go_again.upper() == 'N':
-                print("\nExiting pipeline. Saving bad frames report...")
-                
-                # Save bad frames CSV (like original)
-                bad_frames = pd.DataFrame.from_dict(
-                    aspectnone_tiles_dict,
-                    orient='index'
-                )
-                bad_frames_path = os.path.join(save_dir, 'bad_frames.csv')
-                bad_frames.to_csv(bad_frames_path)
-                
-                print(f"✓ Bad frames report saved to: {bad_frames_path}")
-                ga = True
-            else:
-                print("Please pick a valid option. [Y/N]")
-    
-    ###########################################################################
+    #     couldn't find group info — same root cause as Group -1)
+    orphan_obsids = set()
+    if obs_table is not None:
+        orphan_mask = pd.Series(False, index=obs_table.index)
+ 
+        if 'Group_Status' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_Status'] == 'ORPHAN')
+            orphan_mask |= (obs_table['Group_Status'] == 'UNKNOWN')
+ 
+        if 'Group_ID' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_ID'] == -1)
+ 
+        orphan_obsids = set(obs_table.loc[orphan_mask, 'ObsID'].astype(str).unique())
+ 
+    if orphan_obsids:
+        print(f"\nOrphan OBSIDs identified: {len(orphan_obsids)}")
+    else:
+        print("\nNo orphan observations to quarantine.")
+ 
+    orphan_moved = 0
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+ 
+    for folder in top_folders:
+        match = obsid_pattern.search(folder)
+        if not match:
+            continue
+        obsid = match.group(1)
+ 
+        if obsid not in orphan_obsids:
+            continue
+ 
+        folder_path = os.path.join(data_dir, folder)
+        dest = os.path.join(orphans_dir, folder)
+ 
+        if os.path.exists(dest):
+            print(f"  {obsid} — already in Orphans/, skipping")
+            continue
+ 
+        try:
+            shutil.move(folder_path, dest)
+            print(f"  Moved {folder} → Orphans/")
+            orphan_moved += 1
+        except Exception as e:
+            print(f"  Error moving {folder}: {e}")
+ 
+    print(f"Orphan observations quarantined: {orphan_moved}")
+ 
+    ##############################################################################
+    # 3.5b: MOVE FULLY-UNCORRECTED OBSERVATIONS
+    # Only quarantine observations where EVERY extension on EVERY
+    # band is NONE.  Partially-corrected observations are kept 
+    # uvotimsum will exclude the bad extensions during summation... I think
+    print(f"\nScanning remaining observations for fully-uncorrected files...")
+ 
+    aspcorr_moved = 0
+ 
+    # Re-read top folders (some may have been moved to Orphans above)
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+ 
+    for folder in top_folders:
+        match = obsid_pattern.search(folder)
+        if not match:
+            continue
+        obsid = match.group(1)
+        folder_path = os.path.join(data_dir, folder)
+ 
+        # Scan all SK files and check if ANY extension is corrected
+        has_any_correction = False
+        found_any_sk = False
+ 
+        for root_d, _, fnames in os.walk(folder_path):
+            for fname in fnames:
+                if "_sk.img" not in fname:
+                    continue
+                band_found = False
+                for b in ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]:
+                    if b in fname:
+                        band_found = True
+                        break
+                if not band_found:
+                    continue
+ 
+                found_any_sk = True
+                fpath = os.path.join(root_d, fname)
+ 
+                try:
+                    with fits.open(fpath) as hdul:
+                        for hdu in hdul:
+                            naxis = hdu.header.get('NAXIS', 0)
+                            if naxis < 2:
+                                continue
+                            val = str(hdu.header.get("ASPCORR", "NONE")).strip().upper()
+                            if val in ("DIRECT", "UNICORR"):
+                                has_any_correction = True
+                                break
+                    if has_any_correction:
+                        break
+                except Exception:
+                    continue
+            if has_any_correction:
+                break
+ 
+        if not found_any_sk:
+            continue
+ 
+        # If at least one extension is corrected, keep it, uvotimsum
+        # will handle excluding the bad extensions during summation... I think?
+        if has_any_correction:
+            continue
+ 
+        # Fully uncorrected, move to NotASPCORR
+        dest = os.path.join(not_aspcorr_dir, folder)
+        if os.path.exists(dest):
+            print(f"  {obsid} — already in NotASPCORR/, skipping")
+            continue
+ 
+        try:
+            shutil.move(folder_path, dest)
+            print(f"  Moved {folder} -> NotASPCORR/  (all extensions NONE)")
+            aspcorr_moved += 1
+        except Exception as e:
+            print(f"  Error moving {folder}: {e}")
+ 
+    print(f"Fully-uncorrected observations quarantined: {aspcorr_moved}")
+ 
+    # Summary
+    total_quarantined = orphan_moved + aspcorr_moved
+    print(f"\n{'─' * 70}")
+    print(f"QUARANTINE SUMMARY")
+    print(f"  Orphans -> Orphans/          : {orphan_moved}")
+    print(f"  Fully NONE -> NotASPCORR/    : {aspcorr_moved}")
+    print(f"  Total quarantined            : {total_quarantined}")
+    remaining_folders = [f for f in os.listdir(data_dir)
+                         if os.path.isdir(os.path.join(data_dir, f))
+                         and f not in QUARANTINE_FOLDERS]
+    print(f"  Remaining observations       : {len(remaining_folders)}")
+    print(f"  (Partial corrections handled by uvotimsum exclude)")
+    print(f"{'─' * 70}")
+ 
+    #################################################################################
+    # STEP 4: PHOTOMETRY EXTRACTION  (summation -> uvotsource -> master data)
+
+    print("\n[PIPELINE STEP 4/4] Running photometry extraction (summation + uvotsource)...")
+ 
+    # Reload the obs_table so it reflects any corrections from Step 3.
+    table_path = os.path.join(save_dir, "observations_table.csv")
+    if os.path.exists(table_path):
+        obs_table = pd.read_csv(table_path)
+ 
+    master_photometry = run_uvotsource_pipeline(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        source_reg=None,   # will prompt via Tk dialog
+        bkg_reg=None,       # will prompt via Tk dialog, this will be updated?
+        automation_mode=False,
+    )
+ 
+    #################################################################################
     # FINAL SUMMARY
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("PIPELINE COMPLETE")
-    print("="*70)
+    print("=" * 70)
     print(f"Data directory: {data_dir}")
     print(f"Save directory: {save_dir}")
     print("\nGenerated files:")
-    print(f"  - observations_table.csv")
-    print(f"  - workload_summary.csv")
-    print(f"  - orphan_frames/ (if applicable)")
+    print("  - observations_table.csv")
+    print("  - workload_summary.csv")
+    print("  - Orphans/ (quarantined orphan observations)")
+    print("  - NotASPCORR/ (quarantined uncorrected/partial observations)")
     if aspectnone_dict and sum(aspectnone_dict.values()) > 0:
-        print(f"  - bad_frames.csv")
-    print("="*70)
+        print("  - bad_frames.csv")
+    print("  - master_photometry.csv")
+    print("  - UVOT_Data_Analysis.xlsx")
+    print("=" * 70)
