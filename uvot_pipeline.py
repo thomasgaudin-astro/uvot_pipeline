@@ -810,7 +810,7 @@ def read_ogle_data(source_name):
 
 def read_uvot_data(source_name):
 
-    uvot_data = pd.read_csv(f'./UVOT_Outputs/{source_name}_uvot_data.txt', header=None, sep=r'\s+', names=['MJD', 'Mag', 'Mag_Err', 'F_lam', 'F_lam_err'])
+    uvot_data = pd.read_csv(f'./UVOT_Outputs/{source_name}_uvot_data.txt', header=None, sep=r'\s+', names=['MJD', 'Mag', 'Mag_Err', 'F_lam', 'F_lam_err', 'F_lam_coin_lim', 'OBSID'])
 
     return uvot_data
 
