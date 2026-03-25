@@ -23,7 +23,7 @@ parser.add_argument('tile_name', help="The name of the tile. This will be used t
 parser.add_argument('-nd', '--no_detect', action='store_true', help='Skips uvotdetect command for each tile.')
 parser.add_argument('-rb', '--remove_bad', action='store_true', help='Removes bad aspect correction tiles instead of correcting them.')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
-parser.add_argment('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
+parser.add_argument('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
 
 args = parser.parse_args()
 
