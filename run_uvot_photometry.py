@@ -234,6 +234,7 @@ for obs in tqdm(all_target_filepaths):
 
         # Re-shape data array into DataFrame
         data_array = pd.DataFrame(data_array.reshape(1, 126), columns=data.names)
+        data_array['OBSID'] = obs
         
         # If this is first observation, create source_data DataFrame from data_array DataFrame. 
         # If this is not the first observation, tack the data_array values onto the end of the source_data DataFrame
@@ -275,7 +276,7 @@ source_std_dev_mag = np.std(source_data['MAG'])
 source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
 
 #copy just the values that we want to a sliced DataFrame
-uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
+uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX AA COI LIM', 'OBSID']].copy()
 
 outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
