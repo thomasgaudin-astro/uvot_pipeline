@@ -21,7 +21,7 @@ for ind, target in enumerate(targets.index):
 
     targname = targets.loc[ind, 'ID']
     targ_ra = targets.loc[ind, 'UVOT RA']
-    targ_dec = targets.loc[ind, 'UVOT DEC']
+    targ_dec = targets.loc[ind, 'UVOT Dec']
 
     print(f'Begin photometry for Source {targname}.')
 
