@@ -23,6 +23,7 @@ parser.add_argument('tile_name', help="The name of the tile. This will be used t
 parser.add_argument('-nd', '--no_detect', action='store_true', help='Skips uvotdetect command for each tile.')
 parser.add_argument('-rb', '--remove_bad', action='store_true', help='Removes bad aspect correction tiles instead of correcting them.')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
+parser.add_argment('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
 
 args = parser.parse_args()
 
@@ -59,46 +60,62 @@ new_tile_name = tiles.loc[tile_index, 'New Tile Name']
 
 run_pipeline = True
 
+#sets remove bad parameter for multiple runs
+if args.remove_bad:
+    removing_bad = True
+else:
+    removing_bad = False
+
+counter = 0
+
 while run_pipeline == True:
-    if args.remove_bad:
+    if removing_bad == True:
         print('Frames with no aspect correction will be removed.')
     
     else:
         print('Setting Global Parameters for Aspect Correction:\n')
+        #depending on number of runs performed, reduce area and number of star matches used for aspect corrections
+        if args.batch:
+            side_buffers = [7, 5, 4]
+            num_star_choices = [50, 30, 15]
+
+            side_buffer = side_buffers[counter]
+            num_stars = num_star_choices[counter]                
+
+        else:
+            #change the parameters of the aspect correction process
+            sb_needed = True
+            ns_needed = True
                 
-        #change the parameters of the aspect correction process
-        sb_needed = True
-        ns_needed = True
-            
-        while sb_needed == True:
-            
-            side_buffer = input("Please select the distance from the center of the frame that you wish to include: [7]")
-            
-            if side_buffer == "":
-                side_buffer = 7
-                sb_needed = False
-            else:
-                try:
-                    int(side_buffer)
+            while sb_needed == True:
+                
+                side_buffer = input("Please select the distance from the center of the frame that you wish to include: [7]")
+                
+                if side_buffer == "":
+                    side_buffer = 7
                     sb_needed = False
-                    side_buffer = int(side_buffer)
-                except:
-                    print("Please pick a valid integer.")
-                    
-        while ns_needed == True:
-            
-            num_stars = input("Please choose how many stars you wish to select for use in aspect correction: [50]")
-            
-            if num_stars == "":
-                num_stars = 50
-                ns_needed = False
-            else:
-                try:
-                    int(num_stars)
+                else:
+                    try:
+                        int(side_buffer)
+                        sb_needed = False
+                        side_buffer = int(side_buffer)
+                    except:
+                        print("Please pick a valid integer.")
+                        
+            while ns_needed == True:
+                
+                num_stars = input("Please choose how many stars you wish to select for use in aspect correction: [50]")
+                
+                if num_stars == "":
+                    num_stars = 50
                     ns_needed = False
-                    num_stars = int(num_stars)
-                except:
-                    print("Please pick a valid integer.")
+                else:
+                    try:
+                        int(num_stars)
+                        ns_needed = False
+                        num_stars = int(num_stars)
+                    except:
+                        print("Please pick a valid integer.")
             
     aspectnone_dict = {}
     aspectnone_tiles_dict = {}
@@ -320,26 +337,37 @@ while run_pipeline == True:
         
         else:
             
-            print(f'Found {sum(aspectnone_dict.values())} frames that still need correcting.')
-            
-            ga = False
-            
-            while ga == False:
-                go_again = input('Do you wish to change the global parameters and try another round of aspect correction? [Y/N]')
+            if args.batch:
+
+                counter += 1
                 
-                if go_again.upper() == 'Y':
-                    print('Starting Next Pass.')
-                    ga=True
+                if counter > 2:
+                    removing_bad = True
+                
+                ga = True
+            
+            else:
+
+                print(f'Found {sum(aspectnone_dict.values())} frames that still need correcting.')
+                
+                ga = False
+                
+                while ga == False:
+                    go_again = input('Do you wish to change the global parameters and try another round of aspect correction? [Y/N]')
                     
-                elif go_again.upper() == 'N':
-                    print('Exiting Cleaning Pipeline. Please manually check remaining bad frames.')
-                    print('Outputting bad_frames.csv for manual inspection.')
-                    
-                    bad_frames = pd.DataFrame.from_dict(aspectnone_tiles_dict, orient='index')
-                    bad_frames.to_csv('bad_frames.csv')
-                    
-                    run_pipeline = False
-                    ga=True
-                    
-                else:
-                    print("Please pick a valid option. [Y/N]")
+                    if go_again.upper() == 'Y':
+                        print('Starting Next Pass.')
+                        ga=True
+                        
+                    elif go_again.upper() == 'N':
+                        print('Exiting Cleaning Pipeline. Please manually check remaining bad frames.')
+                        print('Outputting bad_frames.csv for manual inspection.')
+                        
+                        bad_frames = pd.DataFrame.from_dict(aspectnone_tiles_dict, orient='index')
+                        bad_frames.to_csv('bad_frames.csv')
+                        
+                        run_pipeline = False
+                        ga=True
+                        
+                    else:
+                        print("Please pick a valid option. [Y/N]")
