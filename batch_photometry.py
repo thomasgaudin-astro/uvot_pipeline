@@ -26,6 +26,6 @@ for ind, target in enumerate(targets.index):
     print(f'Begin photometry for Source {targname}.')
 
     subprocess.run(['python', 
-                    f'./run_uvot_photometry.py {targname} {targname}_source.reg {targname}_bkg.reg {targ_ra} {targ_dec}'])
+                    f'run_uvot_photometry.py {targname} {targname}_source.reg {targname}_bkg.reg {targ_ra} {targ_dec}'])
 
 print('Batch processing complete. Check UVOT Outputs folder for completed light curves.')
