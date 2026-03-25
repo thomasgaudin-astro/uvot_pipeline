@@ -102,35 +102,35 @@ use_tile = False
 valid_tile = False
 
 # Check to see if this tile is 
-while use_tile == False:
+# while use_tile == False:
 
-    uf = input(f'Do you wish to use {closest_tile}? [Y]')
+#     uf = input(f'Do you wish to use {closest_tile}? [Y]')
 
-    if uf == "":
-        print(f"Using {closest_tile}")
-        use_tile = True
-    elif uf.upper == "Y":
-        use_tile = True
-    elif uf.upper == "N":
-        closest_tile = input(f'Which tile do you wish to use instead? ')
+#     if uf == "":
+#         print(f"Using {closest_tile}")
+#         use_tile = True
+#     elif uf.upper == "Y":
+#         use_tile = True
+#     elif uf.upper == "N":
+#         closest_tile = input(f'Which tile do you wish to use instead? ')
         
-        # Check to make sure new tile is real.
-        while valid_tile == False:
-            filepath = f'./S-CUBED'
+#         # Check to make sure new tile is real.
+#         while valid_tile == False:
+#             filepath = f'./S-CUBED'
         
-            all_filepaths = sorted(os.listdir(filepath))
-            if '.DS_Store' in all_filepaths:
-                all_filepaths.remove('.DS_Store')
+#             all_filepaths = sorted(os.listdir(filepath))
+#             if '.DS_Store' in all_filepaths:
+#                 all_filepaths.remove('.DS_Store')
 
-            if closest_tile in all_filepaths:
-                print(f"Using {closest_tile}")
-                valid_tile = True
-            else:
-                print("Tile not found. Please input a valid title.")
+#             if closest_tile in all_filepaths:
+#                 print(f"Using {closest_tile}")
+#                 valid_tile = True
+#             else:
+#                 print("Tile not found. Please input a valid title.")
             
-        use_tile = True
-    else:
-        print("Please pick a valid option [Y/N]")
+#         use_tile = True
+#     else:
+#         print("Please pick a valid option [Y/N]")
 
 print("\nStarting aperture photometry.")
 
