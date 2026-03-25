@@ -2,6 +2,8 @@ import subprocess
 import pandas as pd
 import argparse
 
+parser = argparse.ArgumentParser(description='Options for Batch Photometry Script.')
+
 parser.add_argument('filename', help="The name of the file containing a list of sources, S-CUBED tiles, and their cleaning status.")
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
 
