@@ -276,7 +276,7 @@ source_std_dev_mag = np.std(source_data['MAG'])
 source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
 
 #copy just the values that we want to a sliced DataFrame
-uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX AA COI LIM', 'OBSID']].copy()
+uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX_AA_COI_LIM', 'OBSID']].copy()
 
 outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
