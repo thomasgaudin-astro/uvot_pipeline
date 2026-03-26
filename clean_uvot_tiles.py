@@ -13,8 +13,6 @@ import uvot_pipeline as up
 import argparse
 import warnings
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from tqdm import tqdm
 from sh import gunzip
 from astropy.units import UnitsWarning
