@@ -223,7 +223,7 @@ while run_pipeline == True:
             continue
         
         else:
-            if args.remove_bad:
+            if removing_bad == True:
                 print("Removing Bad Frames.")
                 
                 out_filepath = filepath+'/AspectNone'
