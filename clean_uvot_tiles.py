@@ -80,7 +80,10 @@ while run_pipeline == True:
             num_star_choices = [50, 30, 15]
 
             side_buffer = side_buffers[counter]
-            num_stars = num_star_choices[counter]                
+            num_stars = num_star_choices[counter]    
+
+            print(f'Distance from the center of the frame included: {side_buffer}')  
+            print(f'Number of stars used in aspect correction: {num_stars}')          
 
         else:
             #change the parameters of the aspect correction process
@@ -320,7 +323,7 @@ while run_pipeline == True:
         
         print("Aspect Correction Check is complete.\n")
         
-    print('First Pass finished.')
+    print(f'Pass {counter} finished.')
     if args.remove_bad:
         print('No more actions needed.')
         print('Exiting Cleaning Pipeline')
@@ -338,6 +341,7 @@ while run_pipeline == True:
         else:
             
             if args.batch:
+                print(f'Found {sum(aspectnone_dict.values())} frames that still need correcting.')
 
                 counter += 1
                 
