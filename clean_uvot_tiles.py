@@ -62,13 +62,14 @@ run_pipeline = True
 
 pass_counter = 0
 
-#sets remove bad parameter for multiple runs
-if (args.remove_bad) | (pass_counter > 2):
-    removing_bad = True
-else:
-    removing_bad = False
-
 while run_pipeline == True:
+
+    #sets remove bad parameter for multiple runs
+    if (args.remove_bad) | (pass_counter > 2):
+        removing_bad = True
+    else:
+        removing_bad = False
+
     if removing_bad == True:
         print('Frames with no aspect correction will be removed.')
     
