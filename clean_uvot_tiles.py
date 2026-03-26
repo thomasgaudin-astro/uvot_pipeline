@@ -216,7 +216,7 @@ while run_pipeline == True:
             if removing_bad == True:
                 print("Removing Bad Frames.")
                 
-                out_filepath = filepath+'/AspectNone'
+                out_filepath = f'./S-CUBED/{sc_tile}/AspectNone'
                 up.remove_aspect_uncorrected(filepath, out_filepath, aspect_uncorrected_frames)
                 
                 

@@ -562,10 +562,13 @@ def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tile
 
     for auct in tqdm(aspect_uncorrected_tiles):
     
-        source = os.path.join(in_filepath, auct)
-        destination = out_filepath+'AspectNone'
-    
-        shutil.move(source, destination)
+        source = f'./S-CUBED/{sc_tile}/UVOT/{auct}'
+        destination = out_filepath
+
+        if os.path.isdir(f'{out_filepath}/{auct}'):
+            shutil.rmtree(source)
+        else:
+            shutil.move(source, destination)
         
 def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
 
