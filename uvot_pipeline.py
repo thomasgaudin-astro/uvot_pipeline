@@ -791,7 +791,7 @@ def single_uvotdetect(filepath, path, verbose=False):
 
     uvotdetect_command = create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
 
-    if verbose=True:
+    if verbose==True:
         run_uvotdetect_verbose(uvotdetect_command)
     else:
         run_uvotdetect(uvotdetect_command)
