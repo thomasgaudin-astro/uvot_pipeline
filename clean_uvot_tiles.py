@@ -13,6 +13,8 @@ import uvot_pipeline as up
 import argparse
 import warnings
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from tqdm import tqdm
 from sh import gunzip
 from astropy.units import UnitsWarning
@@ -153,25 +155,16 @@ while run_pipeline == True:
             print('uvotdetect was skipped.')
         else:
             print("Running uvotdetect.")
-            for path in tqdm(all_filepaths):
-                subpath = os.path.join(filepath, path)
-                
-                sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
-                outpath_fill = 'uvot/image/detect.fits'
-                exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-                detectpath_fill = 'uvot/image/detect.reg'
-                
-                full_sourcepath = os.path.join(subpath, sourcepath_fill)
-                full_outpath = os.path.join(subpath, outpath_fill)
-                full_exppath = os.path.join(subpath, exppath_fill)
-                full_detectpath = os.path.join(subpath, detectpath_fill)
-
-                uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
-
-                if args.verbose:
-                    up.run_uvotdetect_verbose(uvotdetect_command)
-                else:
-                    up.run_uvotdetect(uvotdetect_command)
+            with tqdm(total=len(all_filepaths)) as pbar:
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    if args.verbose:
+                        verbose = True
+                    else:
+                        verbose = False
+                    futures = [executor.submit(up.single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
+                    for future in as_completed(futures):
+                        pbar.update(1)
+                        yield future.result()
         
             print("uvotdetect is complete.\n")
     
