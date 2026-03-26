@@ -12,7 +12,6 @@ import shutil
 import uvot_pipeline as up
 import argparse
 import warnings
-from numba_progress import ProgressBar
 
 from tqdm import tqdm
 from sh import gunzip
@@ -129,8 +128,6 @@ while run_pipeline == True:
     # for sc_tile in tiles['Tile Name']:
     for sc_tile in [args.tile_name]:
 
-        sc_tile = str(sc_tile)
-
         print(f'Downloading new data for Tile {sc_tile}.')
 
         undownloaded_files = up.check_for_undownloaded_files(sc_tile, new_tile_name, tile_ra, tile_dec)
@@ -155,14 +152,26 @@ while run_pipeline == True:
         if args.no_detect:
             print('uvotdetect was skipped.')
         else:
-    
             print("Running uvotdetect.")
-            if args.verbose:
-                with ProgressBar(total=len(all_filepaths)) as numba_progress:
-                    up.parallel_uvotdetect(all_filepaths, filepath, verbose=True, progress_hook=numba_progress)
-            else:
-                with ProgressBar(total=len(all_filepaths)) as numba_progress:
-                    up.parallel_uvotdetect(all_filepaths, filepath, verbose=False, progress_hook=numba_progress)
+            for path in tqdm(all_filepaths):
+                subpath = os.path.join(filepath, path)
+                
+                sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
+                outpath_fill = 'uvot/image/detect.fits'
+                exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
+                detectpath_fill = 'uvot/image/detect.reg'
+                
+                full_sourcepath = os.path.join(subpath, sourcepath_fill)
+                full_outpath = os.path.join(subpath, outpath_fill)
+                full_exppath = os.path.join(subpath, exppath_fill)
+                full_detectpath = os.path.join(subpath, detectpath_fill)
+
+                uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+
+                if args.verbose:
+                    up.run_uvotdetect_verbose(uvotdetect_command)
+                else:
+                    up.run_uvotdetect(uvotdetect_command)
         
             print("uvotdetect is complete.\n")
     

@@ -23,13 +23,10 @@ from tqdm import tqdm
 import requests
 from requests.auth import HTTPBasicAuth
 
-from numba import njit, prange
-
 class DownloadError(Exception):
     """Raise when requests status quo does not return 200."""
     pass
 
-@njit
 def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
@@ -53,7 +50,6 @@ def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_
 
     return bash_command
 
-@njit
 def run_uvotdetect(uvotdetect_command):
 
     # Run the command
@@ -68,7 +64,6 @@ def run_uvotdetect(uvotdetect_command):
 
     return result.stdout
 
-@njit
 def run_uvotdetect_verbose(uvotdetect_command):
 
     # Run the command
@@ -781,31 +776,6 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
             with open(reg_filename, mode='w', encoding='utf-8') as regfile:
                 regfile.write(new_reg_text)
 
-@njit(parallel=True)
-def parallel_uvotdetect(all_filepaths, filepath, verbose=True, progress_hook=None):
-    for p_path in prange(len(all_filepaths)):
-        path = all_filepaths[p_path]
-        subpath = os.path.join(filepath, path)
-        
-        sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
-        outpath_fill = 'uvot/image/detect.fits'
-        exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-        detectpath_fill = 'uvot/image/detect.reg'
-        
-        full_sourcepath = os.path.join(subpath, sourcepath_fill)
-        full_outpath = os.path.join(subpath, outpath_fill)
-        full_exppath = os.path.join(subpath, exppath_fill)
-        full_detectpath = os.path.join(subpath, detectpath_fill)
-
-        uvotdetect_command = create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
-
-        if verbose == True:
-            run_uvotdetect_verbose(uvotdetect_command)
-        else:
-            run_uvotdetect(uvotdetect_command)
-        
-        if progress_hook is not None:
-            progress_hook.update(1)
 
 def download_ogle_data(ogle_name, source_name):
 
