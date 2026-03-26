@@ -160,7 +160,8 @@ while run_pipeline == True:
             else:
                 verbose = False
             
-            up.parallel_uvotdetect(filepath, all_filepaths, verbose)
+            for _ in up.parallel_uvotdetect(filepath, all_filepaths, verbose):
+                pass
         
             print("uvotdetect is complete.\n")
     
