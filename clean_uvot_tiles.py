@@ -319,10 +319,10 @@ while run_pipeline == True:
         for path in tqdm(all_filepaths):
 
             #file names
-            detect_fitsfile = f'{filepath}/{obs}/uvot/image/detect.fits'
-            detect_regfile = f'{filepath}/{obs}/uvot/image/detect.reg'
-            ref_regfile = f'{filepath}/{obs}/uvot/image/ref.reg'
-            obs_regfile = f'{filepath}/{obs}/uvot/image/obs.reg'
+            detect_fitsfile = f'{filepath}/uvot/image/detect.fits'
+            detect_regfile = f'{filepath}/uvot/image/detect.reg'
+            ref_regfile = f'{filepath}/uvot/image/ref.reg'
+            obs_regfile = f'{filepath}/uvot/image/obs.reg'
 
             #remove source.fits if it exists
             if os.path.exists(detect_fitsfile) == True:
