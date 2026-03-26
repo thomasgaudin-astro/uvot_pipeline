@@ -314,7 +314,32 @@ while run_pipeline == True:
     print(f'Pass {pass_counter} finished.')
     if args.remove_bad:
         print('No more actions needed.')
-        print('Exiting Cleaning Pipeline')
+        print('Exiting Cleaning Pipeline and Removing Unnecessary Files.')
+
+        #loop through all filepaths and remove source.fits & source.reg files
+        for path in tqdm(all_filepaths):
+
+            #file names
+            detect_fitsfile = f'{filepath}/{obs}/uvot/image/detect.fits'
+            detect_regfile = f'{filepath}/{obs}/uvot/image/detect.reg'
+            ref_regfile = f'{filepath}/{obs}/uvot/image/ref.reg'
+            obs_regfile = f'{filepath}/{obs}/uvot/image/obs.reg'
+
+            #remove source.fits if it exists
+            if os.path.exists(detect_fitsfile) == True:
+                os.remove(detect_fitsfile)
+
+            #remove source.reg if it exists
+            if os.path.exists(detect_regfile) == True:
+                os.remove(detect_regfile)
+
+            #remove source.reg if it exists
+            if os.path.exists(ref_regfile) == True:
+                os.remove(ref_regfile)
+
+            #remove source.reg if it exists
+            if os.path.exists(obs_regfile) == True:
+                os.remove(obs_regfile)
         
         run_pipeline = False
     else:
@@ -322,7 +347,32 @@ while run_pipeline == True:
         if sum(aspectnone_dict.values()) == 0:
             
             print('No more tiles to aspect correct. No more actions needed.')
-            print('Exiting Cleaning Pipeline.')
+            print('Exiting Cleaning Pipeline and Removing Unnecessary Files.')
+
+            #loop through all filepaths and remove source.fits & source.reg files
+            for path in tqdm(all_filepaths):
+
+                #file names
+                detect_fitsfile = f'{filepath}/{obs}/uvot/image/detect.fits'
+                detect_regfile = f'{filepath}/{obs}/uvot/image/detect.reg'
+                ref_regfile = f'{filepath}/{obs}/uvot/image/ref.reg'
+                obs_regfile = f'{filepath}/{obs}/uvot/image/obs.reg'
+
+                #remove source.fits if it exists
+                if os.path.exists(detect_fitsfile) == True:
+                    os.remove(detect_fitsfile)
+
+                #remove source.reg if it exists
+                if os.path.exists(detect_regfile) == True:
+                    os.remove(detect_regfile)
+
+                #remove source.reg if it exists
+                if os.path.exists(ref_regfile) == True:
+                    os.remove(ref_regfile)
+
+                #remove source.reg if it exists
+                if os.path.exists(obs_regfile) == True:
+                    os.remove(obs_regfile)
             
             run_pipeline = False
         
