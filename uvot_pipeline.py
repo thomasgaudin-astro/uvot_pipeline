@@ -794,7 +794,7 @@ def parallel_uvotdetect(all_filepaths, filepath, progress_hook=None):
         full_exppath = os.path.join(subpath, exppath_fill)
         full_detectpath = os.path.join(subpath, detectpath_fill)
 
-        uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+        uvotdetect_command = create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
 
         if args.verbose:
             run_uvotdetect_verbose(uvotdetect_command)
