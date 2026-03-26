@@ -776,7 +776,7 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
             with open(reg_filename, mode='w', encoding='utf-8') as regfile:
                 regfile.write(new_reg_text)
 
-def single_uvotdetect(filepath, path, verbose=False)
+def single_uvotdetect(filepath, path, verbose=False):
     subpath = os.path.join(filepath, path)
     
     sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
