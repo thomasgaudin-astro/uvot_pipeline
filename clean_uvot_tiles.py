@@ -129,6 +129,8 @@ while run_pipeline == True:
     # for sc_tile in tiles['Tile Name']:
     for sc_tile in [args.tile_name]:
 
+        sc_tile = str(sc_tile)
+
         print(f'Downloading new data for Tile {sc_tile}.')
 
         undownloaded_files = up.check_for_undownloaded_files(sc_tile, new_tile_name, tile_ra, tile_dec)
