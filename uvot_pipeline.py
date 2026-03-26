@@ -16,7 +16,7 @@ from astropy.table import QTable, Table
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
 
