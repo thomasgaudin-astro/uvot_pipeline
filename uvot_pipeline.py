@@ -29,6 +29,7 @@ class DownloadError(Exception):
     """Raise when requests status quo does not return 200."""
     pass
 
+@njit
 def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
     # Construct bash command
@@ -52,6 +53,7 @@ def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_
 
     return bash_command
 
+@njit
 def run_uvotdetect(uvotdetect_command):
 
     # Run the command
@@ -66,6 +68,7 @@ def run_uvotdetect(uvotdetect_command):
 
     return result.stdout
 
+@njit
 def run_uvotdetect_verbose(uvotdetect_command):
 
     # Run the command
