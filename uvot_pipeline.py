@@ -796,6 +796,13 @@ def single_uvotdetect(filepath, path, verbose=False)
     else:
         run_uvotdetect(uvotdetect_command)
 
+def parallel_uvotdetect(filepath, path, verbose=False):
+    with tqdm(total=len(all_filepaths)) as pbar:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
+            for future in as_completed(futures):
+                pbar.update(1)
+                yield future.result()
 
 def download_ogle_data(ogle_name, source_name):
 

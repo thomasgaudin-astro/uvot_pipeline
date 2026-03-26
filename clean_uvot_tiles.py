@@ -155,16 +155,12 @@ while run_pipeline == True:
             print('uvotdetect was skipped.')
         else:
             print("Running uvotdetect.")
-            with tqdm(total=len(all_filepaths)) as pbar:
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    if args.verbose:
-                        verbose = True
-                    else:
-                        verbose = False
-                    futures = [executor.submit(up.single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
-                    for future in as_completed(futures):
-                        pbar.update(1)
-                        yield future.result()
+            if args.verbose:
+                verbose = True
+            else:
+                verbose = False
+            
+            up.parallel_uvotdetect(filepath, path, verbose)
         
             print("uvotdetect is complete.\n")
     
