@@ -157,8 +157,12 @@ while run_pipeline == True:
         else:
     
             print("Running uvotdetect.")
-            with ProgressBar(total=len(all_filepaths)) as numba_progress:
-                up.parallel_uvotdetect(all_filepaths, filepath, numba_progress)
+            if args.verbose:
+                with ProgressBar(total=len(all_filepaths)) as numba_progress:
+                    up.parallel_uvotdetect(all_filepaths, filepath, verbose=True, numba_progress)
+            else:
+                with ProgressBar(total=len(all_filepaths)) as numba_progress:
+                    up.parallel_uvotdetect(all_filepaths, filepath, verbose=False, numba_progress)
         
             print("uvotdetect is complete.\n")
     

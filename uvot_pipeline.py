@@ -782,7 +782,7 @@ def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec)
                 regfile.write(new_reg_text)
 
 @njit(parallel=True)
-def parallel_uvotdetect(all_filepaths, filepath, progress_hook=None):
+def parallel_uvotdetect(all_filepaths, filepath, verbose=True, progress_hook=None):
     for p_path in prange(len(all_filepaths)):
         path = all_filepaths[p_path]
         subpath = os.path.join(filepath, path)
@@ -799,7 +799,7 @@ def parallel_uvotdetect(all_filepaths, filepath, progress_hook=None):
 
         uvotdetect_command = create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
 
-        if args.verbose:
+        if verbose == True:
             run_uvotdetect_verbose(uvotdetect_command)
         else:
             run_uvotdetect(uvotdetect_command)
