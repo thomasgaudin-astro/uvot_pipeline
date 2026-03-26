@@ -60,10 +60,10 @@ new_tile_name = tiles.loc[tile_index, 'New Tile Name']
 
 run_pipeline = True
 
-counter = 0
+pass_counter = 0
 
 #sets remove bad parameter for multiple runs
-if (args.remove_bad) | (counter > 2):
+if (args.remove_bad) | (pass_counter > 2):
     removing_bad = True
 else:
     removing_bad = False
@@ -79,8 +79,8 @@ while run_pipeline == True:
             side_buffers = [7, 5, 4]
             num_star_choices = [50, 30, 15]
 
-            side_buffer = side_buffers[counter]
-            num_stars = num_star_choices[counter]    
+            side_buffer = side_buffers[pass_counter]
+            num_stars = num_star_choices[pass_counter]    
 
             print(f'Distance from the center of the frame included: {side_buffer}')  
             print(f'Number of stars used in aspect correction: {num_stars}')          
@@ -323,7 +323,7 @@ while run_pipeline == True:
         
         print("Aspect Correction Check is complete.\n")
         
-    print(f'Pass {counter} finished.')
+    print(f'Pass {pass_counter} finished.')
     if args.remove_bad:
         print('No more actions needed.')
         print('Exiting Cleaning Pipeline')
@@ -343,7 +343,7 @@ while run_pipeline == True:
             if args.batch:
                 print(f'Found {sum(aspectnone_dict.values())} frames that still need correcting.')
 
-                counter += 1
+                pass_counter += 1
                 
                 ga = True
             
