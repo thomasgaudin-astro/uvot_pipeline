@@ -60,13 +60,13 @@ new_tile_name = tiles.loc[tile_index, 'New Tile Name']
 
 run_pipeline = True
 
+counter = 0
+
 #sets remove bad parameter for multiple runs
-if args.remove_bad:
+if (args.remove_bad) | (counter > 2):
     removing_bad = True
 else:
     removing_bad = False
-
-counter = 0
 
 while run_pipeline == True:
     if removing_bad == True:
@@ -340,9 +340,6 @@ while run_pipeline == True:
             if args.batch:
 
                 counter += 1
-                
-                if counter > 2:
-                    removing_bad = True
                 
                 ga = True
             
