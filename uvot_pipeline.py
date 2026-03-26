@@ -562,7 +562,7 @@ def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tile
 
     for auct in tqdm(aspect_uncorrected_tiles):
     
-        source = f'./S-CUBED/{sc_tile}/UVOT/{auct}'
+        source = f'{in_filepath}/{auct}'
         destination = out_filepath
 
         if os.path.isdir(f'{out_filepath}/{auct}'):
