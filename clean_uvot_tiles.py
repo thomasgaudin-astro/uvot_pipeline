@@ -12,6 +12,7 @@ import shutil
 import uvot_pipeline as up
 import argparse
 import warnings
+from numba import njit, prange
 
 from tqdm import tqdm
 from sh import gunzip
@@ -154,8 +155,10 @@ while run_pipeline == True:
         else:
     
             print("Running uvotdetect.")
-            
-            for path in tqdm(all_filepaths):
+
+            @njit(parallel=True)
+            for p_path in tqdm(prange(all_filepaths)):
+                path = all_filepaths[p_path]
                 subpath = os.path.join(filepath, path)
                 
                 sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
