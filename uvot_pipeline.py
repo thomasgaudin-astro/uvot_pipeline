@@ -803,7 +803,7 @@ def single_uvotdetect(filepath, path, verbose=False):
 
 def parallel_uvotdetect(filepath, all_filepaths, verbose=False):
     with tqdm(total=len(all_filepaths)) as pbar:
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
             for future in as_completed(futures):
                 pbar.update(1)
