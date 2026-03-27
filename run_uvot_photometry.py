@@ -145,25 +145,13 @@ if '.DS_Store' in all_target_filepaths:
 
 print('\nRe-running uvotdetect on all tiles')
 # Gotta re-run uvotdetect to account for any changes from aspect correction
-for path in tqdm(all_target_filepaths):
-    subpath = os.path.join(tile_filepath, path)
-    
-    sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-    outpath_fill = 'uvot/image/detect.fits'
-    exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-    detectpath_fill = 'uvot/image/detect.reg'
-    
-    full_sourcepath = os.path.join(subpath, sourcepath_fill)
-    full_outpath = os.path.join(subpath, outpath_fill)
-    full_exppath = os.path.join(subpath, exppath_fill)
-    full_detectpath = os.path.join(subpath, detectpath_fill)
+if args.verbose:
+    verbose = True
+else:
+    verbose = False
 
-    uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
-
-    if args.verbose:
-        up.run_uvotdetect_verbose(uvotdetect_command)
-    else:
-        up.run_uvotdetect(uvotdetect_command)
+for _ in up.parallel_uvotdetect(filepath, all_filepaths, verbose):
+    pass
         
 print('All runs of uvotdetect are now complete.\n')
 
@@ -194,23 +182,13 @@ print('Region files generated.\n')
 
 print('Running uvotsource on all files.')
 # Loop through filepaths and run uvotsource
-for obs in tqdm(all_target_filepaths):
+if args.verbose:
+    verbose = True
+else:
+    verbose = False
 
-    #path to improved source region files
-    reg_filepath = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
-
-    #check to make sure new region file exists
-    if os.path.exists(reg_filepath) == True:
-        # Write command for uvotsource using new region file
-        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, reg_filepath, args.bkg_reg, args.source_name)
-    else:
-        # Write command for uvotsource using old region file if new one cannot be found
-        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
-    
-    if "-v" == True:
-        up.run_uvotsource_verbose(uvotsource_command)
-    else:
-        up.run_uvotsource(uvotsource_command)
+for _ in up.parallel_uvotsource(all_filepaths, closest_tile, args.source_name, args.source_reg, args.bkg_reg, verbose):
+    pass
 
 print("Aperture photometry complete.\n")
 

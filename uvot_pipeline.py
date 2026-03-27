@@ -801,10 +801,35 @@ def single_uvotdetect(filepath, path, verbose=False):
     else:
         run_uvotdetect(uvotdetect_command)
 
+def single_uvotsource(tile, obsid, source_name, source_reg, bkg_reg, verbose=False):
+    #path to improved source region files
+    reg_filepath = f'./S-CUBED/{tile}/UVOT/{obsid}/uvot/image/{source_name}_source.reg'
+
+    #check to make sure new region file exists
+    if os.path.exists(reg_filepath) == True:
+        # Write command for uvotsource using new region file
+        uvotsource_command = up.create_uvotsource_bash_command(tile, obsid, reg_filepath, bkg_reg, source_name)
+    else:
+        # Write command for uvotsource using old region file if new one cannot be found
+        uvotsource_command = up.create_uvotsource_bash_command(tile, obsid, source_reg, bkg_reg, source_name)
+    
+    if verbose == True:
+        run_uvotsource_verbose(uvotsource_command)
+    else:
+        run_uvotsource(uvotsource_command)
+
 def parallel_uvotdetect(filepath, all_filepaths, verbose=False):
     with tqdm(total=len(all_filepaths)) as pbar:
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
+            for future in as_completed(futures):
+                pbar.update(1)
+                yield future.result()
+
+def parallel_uvotsource(all_filepaths, tile, source_name, source_reg, bkg_reg, verbose=False):
+    with tqdm(total=len(all_filepaths)) as pbar:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(single_uvotsource, tile, path, source_name, source_reg, bkg_reg, verbose) for path in all_filepaths]
             for future in as_completed(futures):
                 pbar.update(1)
                 yield future.result()
