@@ -808,10 +808,10 @@ def single_uvotsource(tile, obsid, source_name, source_reg, bkg_reg, verbose=Fal
     #check to make sure new region file exists
     if os.path.exists(reg_filepath) == True:
         # Write command for uvotsource using new region file
-        uvotsource_command = up.create_uvotsource_bash_command(tile, obsid, reg_filepath, bkg_reg, source_name)
+        uvotsource_command = create_uvotsource_bash_command(tile, obsid, reg_filepath, bkg_reg, source_name)
     else:
         # Write command for uvotsource using old region file if new one cannot be found
-        uvotsource_command = up.create_uvotsource_bash_command(tile, obsid, source_reg, bkg_reg, source_name)
+        uvotsource_command = create_uvotsource_bash_command(tile, obsid, source_reg, bkg_reg, source_name)
     
     if verbose == True:
         run_uvotsource_verbose(uvotsource_command)
