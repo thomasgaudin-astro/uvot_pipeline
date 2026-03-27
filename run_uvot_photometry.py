@@ -150,7 +150,7 @@ if args.verbose:
 else:
     verbose = False
 
-for _ in up.parallel_uvotdetect(filepath, all_filepaths, verbose):
+for _ in up.parallel_uvotdetect(tile_filepath, all_filepaths, verbose):
     pass
         
 print('All runs of uvotdetect are now complete.\n')
