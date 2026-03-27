@@ -150,7 +150,7 @@ if args.verbose:
 else:
     verbose = False
 
-for _ in up.parallel_uvotdetect(tile_filepath, all_filepaths, verbose):
+for _ in up.parallel_uvotdetect(tile_filepath, all_target_filepaths, verbose):
     pass
         
 print('All runs of uvotdetect are now complete.\n')
@@ -187,7 +187,7 @@ if args.verbose:
 else:
     verbose = False
 
-for _ in up.parallel_uvotsource(all_filepaths, closest_tile, args.source_name, args.source_reg, args.bkg_reg, verbose):
+for _ in up.parallel_uvotsource(all_target_filepaths, closest_tile, args.source_name, args.source_reg, args.bkg_reg, verbose):
     pass
 
 print("Aperture photometry complete.\n")
