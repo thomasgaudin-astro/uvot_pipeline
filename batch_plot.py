@@ -21,7 +21,7 @@ for targind in targets.index:
 
     targname = targets.loc[targind, 'ID']
     ogle_name = targets.loc[targind, 'OGLE Name']
-    sc_name = targets.loc[targind, 'SC num']
+    sc_name = targets.loc[targind, 'SC Num']
 
     print(f'Plotting data for {targname}.')
 
