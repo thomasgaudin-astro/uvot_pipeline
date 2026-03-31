@@ -26,6 +26,6 @@ for targind in targets.index:
 
     print(f'Plotting data for {targname}.')
 
-    subprocess.run(['python', 'plot_mw_lcs.py', f'{targname}', f'{ogle_name}', f'{sc_name}'])
+    subprocess.run(['python', 'plot_mw_lcs.py', f'{targname}', f'{ogle_name}', f'{sc_name}', '-b'])
 
 print('Batch plotting complete. Please check output folders for results.')
