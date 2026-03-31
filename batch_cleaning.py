@@ -14,7 +14,7 @@ parser.add_argument('-v', '--verbose', action='store_true', help='Prints command
 
 args = parser.parse_args()
 
-targets = pd.read_csv(args.filename, header=None, names=['ID', 'UVOT RA', 'UVOT Dec', 'S-CUBED Tile', 'Cleaned?', 'Problems?'], sep=r'\s+')
+targets = pd.read_csv(args.filename, header=None, names=['ID', 'UVOT RA', 'UVOT Dec', 'S-CUBED Tile', 'Cleaned?', 'Problems?', 'OGLE Name', 'SC Num'], sep=r'\s+')
 
 tiles_to_clean = Counter(targets['S-CUBED Tile']).keys()
 
