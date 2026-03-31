@@ -27,87 +27,105 @@ mpl.rcParams['font.family'] = 'Serif'
 parser = argparse.ArgumentParser(description='Options for Plot Light Curves Script.')
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('-ogle_name', help="The name of the source in OGLE. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('-sc_name', help="The name of the source in S-CUBED. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
 
 args = parser.parse_args()
 
 print('Welcome to the Multi-wavelength Light Curve Plotter.')
 print(f'Plotting light curves for the source {args.source_name}.\n')
 
-prompt_ogle = True
-is_ogle = True
-ogle_dl_prompt = True
-
-while prompt_ogle == True:
-
-    ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N] ')
-
-    if ogle.upper() == "Y":
-
-        ogle_name = input("Please provide the OGLE IV name of the source: ")
-
-        while ogle_dl_prompt == True:
-            download = input(f'Do you wish to download the newest version of the OGLE IV Light Curve for this source before plotting? [Y/N] ')
-            
-            if download.upper() == "Y":
-
-                try:
-                    print("Downloading Data.")
-                    up.download_ogle_data(ogle_name, args.source_name)
-                    ogle_dl_prompt = False
-                    print("Download Successful.")
-                except up.DownloadError:
-                    print("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
-
-            elif download.upper() == "N":
-                ogle_dl_prompt = False
-            else:
-                print("Please pick a valid option [Y/N]")
-        
-        prompt_ogle = False
-
-    elif ogle.upper() == "N":
+if args.batch:
+    if args.ogle_name:
+        is_ogle = True
+        ogle_name = args.ogle_name
+    else:
         is_ogle = False
-        prompt_ogle = False
-    else:
-        print("Please pick a valid option [Y/N]")
-
-prompt_xrt = True
-is_xrt = True
-xrt_dl_prompt = True
-
-while prompt_xrt == True:
-
-    xrt = input(f'Is there a S-CUBED XRT Source associated with this UV source? [Y/N]')
-
-    if xrt.upper() == "Y":
-
-        xrt_num = input("Please provide the S-CUBED Number of the source: ")
-
-        while xrt_dl_prompt == True:
-            download_xrt = input(f'Do you wish to download the newest version of the XRT Light Curve for this source before plotting? [Y/N]')
-            
-            if download_xrt.upper() == "Y":
-
-                try:
-                    print("Downloading Data.")
-                    up.download_xrt_data(xrt_num, args.source_name)
-                    xrt_dl_prompt = False
-                    print("Download Successful.")
-                except up.DownloadError:
-                    print("An Error occurred when downloading the file. Please check the name of the XRT Source and try again.")
-
-            elif download_xrt.upper() == "N":
-                xrt_dl_prompt = False
-            else:
-                print("Please pick a valid option [Y/N]")
-        
-        prompt_xrt = False
-
-    elif xrt.upper() == "N":
+    
+    if args.sc_name:
+        is_xrt = True
+        xrt_num = args.sc_name
+    else
         is_xrt = False
-        prompt_xrt = False
-    else:
-        print("Please pick a valid option [Y/N]")
+
+else:
+
+    prompt_ogle = True
+    is_ogle = True
+    xrt_dl_ogle = True
+
+    while prompt_ogle == True:
+
+        ogle = input(f'Is there an OGLE IV Light Curve associated with this UV source? [Y/N] ')
+
+        if ogle.upper() == "Y":
+
+            ogle_name = input("Please provide the OGLE IV name of the source: ")
+
+            while ogle_dl_prompt == True:
+                download = input(f'Do you wish to download the newest version of the OGLE IV Light Curve for this source before plotting? [Y/N] ')
+                
+                if download.upper() == "Y":
+
+                    try:
+                        print("Downloading Data.")
+                        up.download_ogle_data(ogle_name, args.source_name)
+                        ogle_dl_prompt = False
+                        print("Download Successful.")
+                    except up.DownloadError:
+                        print("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
+
+                elif download.upper() == "N":
+                    ogle_dl_prompt = False
+                else:
+                    print("Please pick a valid option [Y/N]")
+            
+            prompt_ogle = False
+
+        elif ogle.upper() == "N":
+            is_ogle = False
+            prompt_ogle = False
+        else:
+            print("Please pick a valid option [Y/N]")
+
+    prompt_xrt = True
+    is_xrt = True
+    xrt_dl_prompt = True
+
+    while prompt_xrt == True:
+
+        xrt = input(f'Is there a S-CUBED XRT Source associated with this UV source? [Y/N]')
+
+        if xrt.upper() == "Y":
+
+            xrt_num = input("Please provide the S-CUBED Number of the source: ")
+
+            while xrt_dl_prompt == True:
+                download_xrt = input(f'Do you wish to download the newest version of the XRT Light Curve for this source before plotting? [Y/N]')
+                
+                if download_xrt.upper() == "Y":
+
+                    try:
+                        print("Downloading Data.")
+                        up.download_xrt_data(xrt_num, args.source_name)
+                        xrt_dl_prompt = False
+                        print("Download Successful.")
+                    except up.DownloadError:
+                        print("An Error occurred when downloading the file. Please check the name of the XRT Source and try again.")
+
+                elif download_xrt.upper() == "N":
+                    xrt_dl_prompt = False
+                else:
+                    print("Please pick a valid option [Y/N]")
+            
+            prompt_xrt = False
+
+        elif xrt.upper() == "N":
+            is_xrt = False
+            prompt_xrt = False
+        else:
+            print("Please pick a valid option [Y/N]")
 
 print('Grabbing data for source.\n')
 
