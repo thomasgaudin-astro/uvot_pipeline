@@ -46,7 +46,7 @@ if args.batch:
     if args.sc_name == 'N':
         is_xrt = False
         
-    else
+    else:
         is_xrt = True
         xrt_num = args.sc_name
 
