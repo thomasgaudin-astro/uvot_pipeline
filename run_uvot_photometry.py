@@ -150,8 +150,8 @@ if args.verbose:
 else:
     verbose = False
 
-for _ in up.parallel_uvotdetect(tile_filepath, all_target_filepaths, verbose):
-    pass
+for obsid in tqdm(all_filepaths):
+    up.single_uvotdetect(tile_filepath, obsid, verbose=verbose)
         
 print('All runs of uvotdetect are now complete.\n')
 
@@ -187,8 +187,8 @@ if args.verbose:
 else:
     verbose = False
 
-for _ in up.parallel_uvotsource(all_target_filepaths, closest_tile, args.source_name, args.source_reg, args.bkg_reg, verbose):
-    pass
+for obsid in tqdm(all_filepaths):
+    up.single_uvotsource(closest_tile, obsid, args.source_name, args.source_reg, arg.sbkg_reg, verbose=verbose)
 
 print("Aperture photometry complete.\n")
 
