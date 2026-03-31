@@ -16,7 +16,6 @@ args = parser.parse_args()
 targets = pd.read_csv(args.filename, header=None, names=['ID', 'UVOT RA', 'UVOT Dec', 'S-CUBED Tile', 'Cleaned?', 'Problems?', 'OGLE Name', 'SC Num'], sep=r'\s+')
 
 print('Starting batch plotting of S-CUBED photometry.\n')
-print(f'Cleaning {len(tiles_to_clean)} tiles.')
 
 for targind in targets.index:
 
