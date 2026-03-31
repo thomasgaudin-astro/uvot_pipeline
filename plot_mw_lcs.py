@@ -27,8 +27,8 @@ mpl.rcParams['font.family'] = 'Serif'
 parser = argparse.ArgumentParser(description='Options for Plot Light Curves Script.')
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which files to plot as a light curve.")
-parser.add_argument('-ogle_name', help="The name of the source in OGLE. This will be used to identify which files to plot as a light curve.")
-parser.add_argument('-sc_name', help="The name of the source in S-CUBED. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('ogle_name', help="The name of the source in OGLE. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('sc_name', help="The name of the source in S-CUBED. This will be used to identify which files to plot as a light curve.")
 parser.add_argument('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
 
 args = parser.parse_args()
@@ -37,17 +37,18 @@ print('Welcome to the Multi-wavelength Light Curve Plotter.')
 print(f'Plotting light curves for the source {args.source_name}.\n')
 
 if args.batch:
-    if args.ogle_name:
+    if args.ogle_name == 'N':
+        is_ogle = False
+    else:
         is_ogle = True
         ogle_name = args.ogle_name
-    else:
-        is_ogle = False
     
-    if args.sc_name:
+    if args.sc_name == 'N':
+        is_xrt = False
+        
+    else
         is_xrt = True
         xrt_num = args.sc_name
-    else
-        is_xrt = False
 
 else:
 
