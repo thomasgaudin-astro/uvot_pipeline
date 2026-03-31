@@ -158,8 +158,8 @@ while run_pipeline == True:
             else:
                 verbose = False
             
-            for _ in up.parallel_uvotdetect(filepath, all_filepaths, verbose):
-                pass
+            for obsid in tqdm(all_filepaths):
+                up.single_uvotdetect(tile_filepath, obsid, verbose=verbose)
         
             print("uvotdetect is complete.\n")
     
