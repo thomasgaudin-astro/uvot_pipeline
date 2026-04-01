@@ -24,7 +24,9 @@ for ind, target in enumerate(targets.index):
     targ_dec = targets.loc[ind, 'UVOT Dec']
 
     print(f'Begin photometry for Source {targname}.')
-
-    subprocess.run(['python', 'run_uvot_photometry.py', f'{targname}', f'{targname}_source.reg', f'{targname}_bkg.reg', f'{targ_ra}', f'{targ_dec}'])
+    if args.verbose:
+         subprocess.run(['python', 'run_uvot_photometry.py', f'{targname}', f'{targname}_source.reg', f'{targname}_bkg.reg', f'{targ_ra}', f'{targ_dec}', '-v'])
+    else:
+        subprocess.run(['python', 'run_uvot_photometry.py', f'{targname}', f'{targname}_source.reg', f'{targname}_bkg.reg', f'{targ_ra}', f'{targ_dec}'])
 
 print('Batch processing complete. Check UVOT Outputs folder for completed light curves.')
