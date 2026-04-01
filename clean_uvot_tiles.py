@@ -238,6 +238,9 @@ while run_pipeline == True:
                 while detect_frame_exists == False:
 
                     counter += 1
+                    
+                    print(len(direct_frames))
+                    print(counter)
 
                     new_ref_frame = direct_frames[counter]
 
