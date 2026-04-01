@@ -187,7 +187,7 @@ if args.verbose:
 else:
     verbose = False
 
-for obsid in tqdm(all_filepaths):
+for obsid in tqdm(all_target_filepaths):
     up.single_uvotsource(closest_tile, obsid, args.source_name, args.source_reg, arg.sbkg_reg, verbose=verbose)
 
 print("Aperture photometry complete.\n")
