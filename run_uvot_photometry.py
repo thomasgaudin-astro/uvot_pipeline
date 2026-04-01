@@ -280,8 +280,8 @@ for obs in tqdm(all_target_filepaths):
         os.remove(source_fitsfile)
 
     #remove source.reg if it exists
-    if os.path.exists(source_regfile) == True:
-        os.remove(source_regfile)
+    # if os.path.exists(source_regfile) == True:
+    #     os.remove(source_regfile)
 
 print("All source.fits files deleted.")
 
