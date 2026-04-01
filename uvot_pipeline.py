@@ -787,7 +787,7 @@ def single_uvotdetect(filepath, path, verbose=False):
     sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
     outpath_fill = 'uvot/image/detect.fits'
     exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-    detectpath_fill = 'uvot/image/detect.reg'
+    detectpath_fill = 'uvot/image/detect1.reg'
     
     full_sourcepath = os.path.join(subpath, sourcepath_fill)
     full_outpath = os.path.join(subpath, outpath_fill)
