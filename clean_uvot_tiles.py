@@ -159,7 +159,7 @@ while run_pipeline == True:
                 verbose = False
             
             for obsid in tqdm(all_filepaths):
-                up.single_uvotdetect(tile_filepath, obsid, verbose=verbose)
+                up.single_uvotdetect(sc_tile, obsid, verbose=verbose)
         
             print("uvotdetect is complete.\n")
     
