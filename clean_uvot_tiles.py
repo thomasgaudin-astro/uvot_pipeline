@@ -360,21 +360,21 @@ while run_pipeline == True:
                 ref_regfile = f'{filepath}/{path}/uvot/image/ref.reg'
                 obs_regfile = f'{filepath}/{path}/uvot/image/obs.reg'
 
-                #remove source.fits if it exists
-                if os.path.exists(detect_fitsfile) == True:
-                    os.remove(detect_fitsfile)
+                # #remove source.fits if it exists
+                # if os.path.exists(detect_fitsfile) == True:
+                #     os.remove(detect_fitsfile)
 
-                #remove source.reg if it exists
-                if os.path.exists(detect_regfile) == True:
-                    os.remove(detect_regfile)
+                # #remove source.reg if it exists
+                # if os.path.exists(detect_regfile) == True:
+                #     os.remove(detect_regfile)
 
-                #remove source.reg if it exists
-                if os.path.exists(ref_regfile) == True:
-                    os.remove(ref_regfile)
+                # #remove source.reg if it exists
+                # if os.path.exists(ref_regfile) == True:
+                #     os.remove(ref_regfile)
 
-                #remove source.reg if it exists
-                if os.path.exists(obs_regfile) == True:
-                    os.remove(obs_regfile)
+                # #remove source.reg if it exists
+                # if os.path.exists(obs_regfile) == True:
+                #     os.remove(obs_regfile)
             
             run_pipeline = False
         
