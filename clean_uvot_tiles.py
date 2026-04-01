@@ -375,7 +375,7 @@ while run_pipeline == True:
                 # #remove source.reg if it exists
                 # if os.path.exists(obs_regfile) == True:
                 #     os.remove(obs_regfile)
-            
+
             run_pipeline = False
         
         else:
