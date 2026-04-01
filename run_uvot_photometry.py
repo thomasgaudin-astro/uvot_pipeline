@@ -151,7 +151,7 @@ else:
     verbose = False
 
 for obsid in tqdm(all_target_filepaths):
-    up.single_uvotdetect(tile_filepath, obsid, verbose=verbose)
+    up.single_alternate_uvotdetect(tile_filepath, obsid, verbose=verbose)
         
 print('All runs of uvotdetect are now complete.\n')
 

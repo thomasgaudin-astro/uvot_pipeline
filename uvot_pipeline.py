@@ -787,6 +787,26 @@ def single_uvotdetect(filepath, path, verbose=False):
     sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
     outpath_fill = 'uvot/image/detect.fits'
     exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
+    detectpath_fill = 'uvot/image/detect.reg'
+    
+    full_sourcepath = os.path.join(subpath, sourcepath_fill)
+    full_outpath = os.path.join(subpath, outpath_fill)
+    full_exppath = os.path.join(subpath, exppath_fill)
+    full_detectpath = os.path.join(subpath, detectpath_fill)
+
+    uvotdetect_command = create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+
+    if verbose==True:
+        run_uvotdetect_verbose(uvotdetect_command)
+    else:
+        run_uvotdetect(uvotdetect_command)
+
+def single_alternate_uvotdetect(filepath, path, verbose=False):
+    subpath = os.path.join(filepath, path)
+    
+    sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
+    outpath_fill = 'uvot/image/detect.fits'
+    exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
     detectpath_fill = 'uvot/image/detect1.reg'
     
     full_sourcepath = os.path.join(subpath, sourcepath_fill)
