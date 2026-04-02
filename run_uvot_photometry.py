@@ -145,13 +145,25 @@ if '.DS_Store' in all_target_filepaths:
 
 print('\nRe-running uvotdetect on all tiles')
 # Gotta re-run uvotdetect to account for any changes from aspect correction
-if args.verbose:
-    verbose = True
-else:
-    verbose = False
+for path in tqdm(all_target_filepaths):
+    subpath = os.path.join(tile_filepath, path)
+    
+    sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
+    outpath_fill = 'uvot/image/detect.fits'
+    exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
+    detectpath_fill = 'uvot/image/detect.reg'
+    
+    full_sourcepath = os.path.join(subpath, sourcepath_fill)
+    full_outpath = os.path.join(subpath, outpath_fill)
+    full_exppath = os.path.join(subpath, exppath_fill)
+    full_detectpath = os.path.join(subpath, detectpath_fill)
 
-for obsid in tqdm(all_target_filepaths):
-    up.single_alternate_uvotdetect(tile_filepath, obsid, verbose=verbose)
+    uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+
+    if args.verbose:
+        up.run_uvotdetect_verbose(uvotdetect_command)
+    else:
+        up.run_uvotdetect(uvotdetect_command)
         
 print('All runs of uvotdetect are now complete.\n')
 
@@ -182,13 +194,23 @@ print('Region files generated.\n')
 
 print('Running uvotsource on all files.')
 # Loop through filepaths and run uvotsource
-if args.verbose:
-    verbose = True
-else:
-    verbose = False
+for obs in tqdm(all_target_filepaths):
 
-for obsid in tqdm(all_target_filepaths):
-    up.single_uvotsource(closest_tile, obsid, args.source_name, args.source_reg, args.bkg_reg, verbose=verbose)
+    #path to improved source region files
+    reg_filepath = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
+
+    #check to make sure new region file exists
+    if os.path.exists(reg_filepath) == True:
+        # Write command for uvotsource using new region file
+        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, reg_filepath, args.bkg_reg, args.source_name)
+    else:
+        # Write command for uvotsource using old region file if new one cannot be found
+        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
+    
+    if "-v" == True:
+        up.run_uvotsource_verbose(uvotsource_command)
+    else:
+        up.run_uvotsource(uvotsource_command)
 
 print("Aperture photometry complete.\n")
 
