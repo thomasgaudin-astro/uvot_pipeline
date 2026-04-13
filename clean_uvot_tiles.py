@@ -279,27 +279,37 @@ while run_pipeline == True:
                     #generate path to detect.fits for observation frame
                     obs_detect_path = f'{filepath}/{obs_frame}/uvot/image/detect.fits'
 
-                    #find brightest stars in the center of the observation frame
-                    obs_bright_stars = up.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
+                    #check to see if any stars are found
+                    stars = QTable.read(obs_detect_path).to_pandas()
+                    num_stars = len(stars.index)
                     
-                    #remove stars that do not match between frames
-                    ref_bright_stars, obs_bright_stars = up.remove_separate_stars(ref_bright_stars, obs_bright_stars)
+                    #only perform aperture correction if stars are detected
+                    if num_stars > 0:
                     
-                    #create ds9 .reg files for reference and observation images
-                    up.create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=obs_directory)
-                    
-                    #copy reference image to uncorrected observation folder
-                    shutil.copy(ref_file_path, obs_directory)
-                    
-                    
-                    #create the command to run uvotunicorr
-                    unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
-                    
-                    #run uvotunicorr
-                    if args.verbose:
-                        up.run_uvotunicorr_verbose(unicorr_command)
+                        #find brightest stars in the center of the observation frame
+                        obs_bright_stars = up.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
+                        
+                        #remove stars that do not match between frames
+                        ref_bright_stars, obs_bright_stars = up.remove_separate_stars(ref_bright_stars, obs_bright_stars)
+                        
+                        #create ds9 .reg files for reference and observation images
+                        up.create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=obs_directory)
+                        
+                        #copy reference image to uncorrected observation folder
+                        shutil.copy(ref_file_path, obs_directory)
+                        
+                        
+                        #create the command to run uvotunicorr
+                        unicorr_command = up.create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=obs_directory)
+                        
+                        #run uvotunicorr
+                        if args.verbose:
+                            up.run_uvotunicorr_verbose(unicorr_command)
+                        else:
+                            up.run_uvotunicorr(unicorr_command)
+                            
                     else:
-                        up.run_uvotunicorr(unicorr_command)
+                        continue
                     
                 print("Corrections Complete. Checking how many were successful.\n")
                 
