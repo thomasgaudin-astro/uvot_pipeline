@@ -520,9 +520,9 @@ def check_direct_corrections(filepath):
                 aspcorr_output = run_fkeyprint(fkeyprint_command)
 
                 if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                else:
                     aspect_direct.append(path)
+                else:
+                    continue
                 
             elif exists == False:
                 continue
@@ -551,9 +551,9 @@ def check_direct_corrections_verbose(filepath):
                 aspcorr_output = run_fkeyprint_verbose(fkeyprint_command)
 
                 if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                else:
                     aspect_direct.append(path)
+                else:
+                    continue
                 
             elif exists == False:
                 continue
