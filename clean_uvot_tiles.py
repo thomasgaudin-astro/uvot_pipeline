@@ -220,9 +220,6 @@ while run_pipeline == True:
             new_all_filepaths.remove('.DS_Store')
     
         print(f"Found {num_uncorrected} Frames in need of Aspect Correction.\n")
-
-        print(aspect_uncorrected_frames)
-        print(aspect_direct_frames)
         
         if num_uncorrected == 0:
             continue
