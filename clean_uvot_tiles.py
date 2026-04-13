@@ -16,6 +16,8 @@ import warnings
 from tqdm import tqdm
 from sh import gunzip
 from astropy.units import UnitsWarning
+from astropy.table import QTable, Table
+
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
@@ -307,7 +309,7 @@ while run_pipeline == True:
                             up.run_uvotunicorr_verbose(unicorr_command)
                         else:
                             up.run_uvotunicorr(unicorr_command)
-                            
+
                     else:
                         continue
                     
