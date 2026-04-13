@@ -280,13 +280,26 @@ uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR'
 
 outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
-#export DataFrame to text file
-with open(outpath, 'w') as f:
-    df_string = uvot_data_slice.to_string(header=False, index=False)
-    f.write(df_string)
-    
-print('Task Complete.')
-print(f'Outputting new file: {args.source_name}_uvot_data.txt')
+#take mean of flux+1sigma error and coincidence loss flux value for rame
+mean_flux_plus = np.mean(source_data['FLUX_AA']+source_data['FLUX_AA_ERR'])
+mean_coi_lim = np.mean(source_data['FLUX_AA_COI_LIM'])
+
+#if we are below coincidence loss limit
+if mean_flux_plus >= mean_coi_lim:
+    #export DataFrame to text file
+    with open(outpath, 'w') as f:
+        df_string = uvot_data_slice.to_string(header=False, index=False)
+        f.write(df_string)
+        
+    print('Task Complete.')
+    print(f'Outputting new file: {args.source_name}_uvot_data.txt')
+
+#if we are at or above coincidence loss limit
+else:
+    print('Task Complete.')
+    print('Flux above UVW1-Band Coincidence Limit.')
+    print('No output file will be written.')
+
 
 print("\nDeleting unnecessary files.")
 
