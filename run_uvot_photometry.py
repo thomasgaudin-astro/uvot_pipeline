@@ -252,6 +252,9 @@ source_data['AB_MAG'] = source_data['AB_MAG'].astype(float)
 source_data['AB_MAG_ERR'] = source_data['AB_MAG_ERR'].astype(float)
 source_data['MAG'] = source_data['MAG'].astype(float)
 source_data['MAG_ERR'] = source_data['MAG_ERR'].astype(float)
+source_data['FLUX_AA'] = source_data['FLUX_AA'].astype(float)
+source_data['FLUX_AA_ERR'] = source_data['FLUX_AA_ERR'].astype(float)
+source_data['FLUX_AA_COI_LIM'] = source_data['FLUX_AA_COI_LIM'].astype(float)
 source_data['MET'] = source_data['MET'].astype(float)
 source_data['EXPOSURE'] = source_data['EXPOSURE'].astype(float)
 
@@ -282,7 +285,7 @@ outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
 #take mean of flux+1sigma error and coincidence loss flux value for rame
 mean_flux_plus = np.mean(source_data['FLUX_AA']+source_data['FLUX_AA_ERR'])
-mean_coi_lim = np.mean(source_data['FLUX_AA_COI_LIM'])
+mean_coi_lim = np.mean(floatsource_data['FLUX_AA_COI_LIM'])
 
 #if we are below coincidence loss limit
 if mean_flux_plus >= mean_coi_lim:
