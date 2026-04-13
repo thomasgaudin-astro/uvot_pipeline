@@ -236,7 +236,7 @@ while run_pipeline == True:
                 print("Correcting Bad Frames.")
                 
                 #list the direct frames
-                direct_frames = [frame for frame in new_all_filepaths if frame not in aspect_direct_frames]
+                direct_frames = [frame for frame in new_all_filepaths if frame in aspect_direct_frames]
                 
                 #reference frame will be first corrected frame that exists
                 ref_frame = direct_frames[0]
