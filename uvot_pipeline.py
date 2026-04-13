@@ -514,6 +514,7 @@ def check_direct_corrections(filepath):
             exists = os.path.exists(full_sourcepath)
             
             if exists == True:
+                print(full_sourcepath)
                 fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
 
                 aspcorr_output = run_fkeyprint(fkeyprint_command)
@@ -544,6 +545,7 @@ def check_direct_corrections_verbose(filepath):
             exists = os.path.exists(full_sourcepath)
             
             if exists == True:
+                print(full_sourcepath)
                 fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
 
                 aspcorr_output = run_fkeyprint_verbose(fkeyprint_command)
