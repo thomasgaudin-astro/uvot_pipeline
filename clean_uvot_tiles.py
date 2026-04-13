@@ -283,10 +283,10 @@ while run_pipeline == True:
 
                     #check to see if any stars are found
                     stars = QTable.read(obs_detect_path).to_pandas()
-                    num_stars = len(stars.index)
+                    num_detected_stars = len(stars.index)
                     
                     #only perform aperture correction if stars are detected
-                    if num_stars > 0:
+                    if num_detected_stars > 0:
                     
                         #find brightest stars in the center of the observation frame
                         obs_bright_stars = up.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
