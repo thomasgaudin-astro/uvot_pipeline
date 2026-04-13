@@ -288,7 +288,7 @@ mean_flux_plus = np.mean(source_data['FLUX_AA']+source_data['FLUX_AA_ERR'])
 mean_coi_lim = np.mean(source_data['FLUX_AA_COI_LIM'])
 
 #if we are below coincidence loss limit
-if mean_flux_plus >= mean_coi_lim:
+if mean_flux_plus <= mean_coi_lim:
     #export DataFrame to text file
     with open(outpath, 'w') as f:
         df_string = uvot_data_slice.to_string(header=False, index=False)
