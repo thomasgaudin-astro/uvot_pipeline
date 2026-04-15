@@ -169,13 +169,17 @@ if is_ogle == True:
     sc_plots.plot_trunc_ogle_uvot_lc(args.source_name, truncated_ogle_data, uvot_data)
 
 if is_xrt == True:
-
-    ymin = input("Please set the minimum y-axis value for XRT Count Rate plots: [0]")
-
-    if ymin == "":
+    
+    if args.batch:
         ymin = 0
+        
     else:
-        ymin = int(ymin)
+        ymin = input("Please set the minimum y-axis value for XRT Count Rate plots: [0]")
+
+        if ymin == "":
+            ymin = 0
+        else:
+            ymin = int(ymin)
 
     sc_plots.plot_xrt_lc_ul(args.source_name, xrt_data, xrt_ul_data, ymin)
 
