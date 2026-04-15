@@ -27,8 +27,8 @@ mpl.rcParams['font.family'] = 'Serif'
 parser = argparse.ArgumentParser(description='Options for Plot Light Curves Script.')
 
 parser.add_argument('source_name', help="The name of the source. This will be used to identify which files to plot as a light curve.")
-parser.add_argument('ogle_name', help="The name of the source in OGLE. This will be used to identify which files to plot as a light curve.")
-parser.add_argument('sc_name', help="The name of the source in S-CUBED. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('--ogle_name', help="The name of the source in OGLE. This will be used to identify which files to plot as a light curve.")
+parser.add_argument('--sc_name', help="The name of the source in S-CUBED. This will be used to identify which files to plot as a light curve.")
 parser.add_argument('-b', '--batch', action='store_true', help='Removes prompts that are unnecessary for batch processing version of code.')
 
 args = parser.parse_args()
@@ -54,7 +54,7 @@ else:
 
     prompt_ogle = True
     is_ogle = True
-    xrt_dl_ogle = True
+    ogle_dl_prompt = True
 
     while prompt_ogle == True:
 
