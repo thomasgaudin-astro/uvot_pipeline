@@ -39,16 +39,33 @@ print(f'Plotting light curves for the source {args.source_name}.\n')
 if args.batch:
     if args.ogle_name == 'N':
         is_ogle = False
+    elif args.ogle_name == '-':
+        is_ogle = True
+        ogle_name = args.source_name
     else:
         is_ogle = True
         ogle_name = args.ogle_name
+
+        try:
+            print("Downloading Data.")
+            up.download_ogle_data(ogle_name, args.source_name)
+            print("Download Successful.")
+        except up.DownloadError:
+            print("An Error occurred when downloading the file. Please check the name of the OGLE Source and try again.")
     
-    if args.sc_name == 'N':
+    if (args.sc_name == 'N') | (args.sc_name == '-'):
         is_xrt = False
-        
     else:
         is_xrt = True
         xrt_num = args.sc_name
+
+        try:
+            print("Downloading Data.")
+            up.download_xrt_data(xrt_num, args.source_name)
+            print("Download Successful.")
+        except up.DownloadError:
+            print("An Error occurred when downloading the file. Please check the name of the XRT Source and try again.")
+
 
 else:
 
