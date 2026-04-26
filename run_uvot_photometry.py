@@ -1,309 +1,272 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Jun  2 12:08:00 2025
+def run_uvot_pipeline(manual_aspect_correction=False):
+    """
+    Complete Swift UVOT processing pipeline. You can set manual mode above.
+    """
 
-@author: tmg6006
-"""
+    print("\n" + "=" * 70)
+    print("SWIFT UVOT COMPLETE PIPELINE")
+    print("=" * 70)
+ 
+    #####################################################################
+    # STEP 1: SETUP DATA DIRECTORIES
+    setup = setup_data_directories()
+    if setup is None:
+        print("\n❌ Setup cancelled.")
+        return
 
-import argparse
+    data_dir = setup['data_directory']
+    save_dir = setup['save_directory']
+    target_ra = setup['target_ra']
+    target_dec = setup['target_dec']
+ 
+    #####################################################################
+    # STEP 2: DATA CLEANUP
 
-import os
+    print("\n[PIPELINE STEP 2/4] Running data cleanup...")
+ 
+    results = clean_up_data(
+        automation_mode=True,
+        base_path=data_dir,
+        save_path=save_dir,
+    )
+ 
+    if results is None or results["observations_table"] is None:
+        print("\n❌ Ruh-Roh-Cleanup failed.")
+        return
+ 
+    obs_table = results["observations_table"]
+ 
+    #####################################################################
+    # STEP 3: AUTOMATED ASPECT CORRECTION
 
-from astropy.io import fits
-import astropy.units as u
-from astropy.coordinates import SkyCoord
-from astropy.time import Time
+    print("\n[PIPELINE STEP 3/4] Running automated aspect correction...")
+    
+    aspectnone_dict, aspectnone_tiles_dict = automated_aspect_correction(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        manual_mode=manual_aspect_correction,
+    )
+ 
+ 
+    ####################################################################
+    # STEP 3.5: QUARANTINE UNUSABLE OBSERVATIONS
+    # Before uvotsource runs, we move observations that are completely
+    # unusable out of the data directory.  Two categories:
+    #
+    #   1. ORPHAN frames -> moved to "Orphans/" subfolder
+    #      These have no nearby DIRECT reference to correct against. and that isnt setup yet
+    #
+    #   2. Fully uncorrected (ALL extensions NONE on ALL bands) → "NotASPCORR/"
+    #      Aspect correction was attempted but failed on every extension.
+    #
+    # Partially-corrected observations (mix of DIRECT and NONE extensions)
+    # are KEPT in place.  The summation step (4c) will use uvotimsum's
+    # exclude parameter to skip the NONE extensions and only sum the
+    # corrected ones, so the resulting summed image is clean. At least it should.
 
-import sys
-
-import pandas as pd
-import numpy as np
-
-import uvot_pipeline as up
-
-from swifttools.swift_too import Clock
-
-from astropy.units import UnitsWarning
-
-from tqdm import tqdm
-
-# Set all required environment variables
-os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
-os.environ['PFILES'] = f"/tmp/pfiles;{os.environ['HEADAS']}/syspfiles"
-os.environ['PLT_DEV'] = '/null'  # Avoid display device errors
-os.environ['HEADASNOQUERY'] = 'YES'  # Prevent prompt errors
-os.environ['CALDB'] = '/bulk/pkg/caldb'  # Local CALDB
-os.environ['CALDBCONFIG'] = '/bulk/pkg/caldb/software/tools/caldb.config'
-os.environ['CALDBALIAS'] = '/bulk/pkg/caldb/software/tools/alias_config.fits'
-
-# Ensure pfiles directory exists
-os.makedirs("/tmp/pfiles", exist_ok=True)
-
-# Set up arguments that need to be passed to the scripts
-parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
-
-parser.add_argument('source_name', help="The name of the source. This will be used to name the output photometry file.")
-parser.add_argument('source_reg', help="The path to 5 arcsecond diameter source region file that contains the star for which you wish to perform photometry.")
-parser.add_argument('bkg_reg', help="The path to background region file that contains the empty sky area that is used to calibrate photometry.")
-parser.add_argument('source_ra', help="The Right Ascension coordinate of the source in decimal degrees.", type=float)
-parser.add_argument('source_dec', help="The Right Ascension coordinate of the source in decimal degrees.", type=float)
-parser.add_argument('-v', '--verbose', action='store_true', help='Prints command outputs instead of surpessing them.')
-
-args = parser.parse_args()
-
-#read in list of tiles
-tiles = pd.read_csv('scubed_tiles.csv')
-
-#run the pipeline
-print('Starting the S-CUBED UVOT Photometry Pipeline.\n')
-
-#check that input folder and source/background regions exist.
-print('Checking existence of files and directories.')
-
-files_exist = False
-
-while files_exist == False:
-
-    if (os.path.exists(args.source_reg) == True) & (os.path.exists(args.bkg_reg) == True):
-        print("Source Region and Background Region exist.")
-        files_exist = True
+    print("\n" + "=" * 70)
+    print("STEP 3.5: QUARANTINING UNUSABLE OBSERVATIONS")
+    print("=" * 70)
+ 
+    # Set up quarantine directories
+    not_aspcorr_dir = os.path.join(data_dir, "NotASPCORR")
+    orphans_dir = os.path.join(data_dir, "Orphans")
+    os.makedirs(not_aspcorr_dir, exist_ok=True)
+    os.makedirs(orphans_dir, exist_ok=True)
+ 
+    # Folders we never touch (already quarantined or special)
+    QUARANTINE_FOLDERS = {"Smeared", "NotASPCORR", "Orphans"}
+ 
+    obsid_pattern = re.compile(r"(\d{11})")
+ 
+    ################################################################
+    # 3.5a: MOVE ORPHAN OBSERVATIONS
+    # Collect orphan OBSIDs from the obs_table.
+    # This includes:
+    #   - Group_Status == 'ORPHAN' (couldn't be grouped spatially)
+    #   - Group_ID == -1 (never matched into all_frames_df at all)
+    #   - Group_Status == 'UNKNOWN' (populate_observations_table
+    
+    #     couldn't find group info — same root cause as Group -1)
+    orphan_obsids = set()
+    if obs_table is not None:
+        orphan_mask = pd.Series(False, index=obs_table.index)
+ 
+        if 'Group_Status' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_Status'] == 'ORPHAN')
+            orphan_mask |= (obs_table['Group_Status'] == 'UNKNOWN')
+ 
+        if 'Group_ID' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_ID'] == -1)
+ 
+        orphan_obsids = set(obs_table.loc[orphan_mask, 'ObsID'].astype(str).unique())
+ 
+    if orphan_obsids:
+        print(f"\nOrphan OBSIDs identified: {len(orphan_obsids)}")
     else:
-        sys.exit("ERROR: Source or Background Region not found.")
-    
-print("Checking which S-CUBED Tile is closest to your photometry target.")
+        print("\nNo orphan observations to quarantine.")
+ 
+    orphan_moved = 0
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+ 
+    for folder in top_folders:
+        match = obsid_pattern.search(folder)
+        if not match:
+            continue
+        obsid = match.group(1)
+ 
+        if obsid not in orphan_obsids:
+            continue
+ 
+        folder_path = os.path.join(data_dir, folder)
+        dest = os.path.join(orphans_dir, folder)
+ 
+        if os.path.exists(dest):
+            print(f"  {obsid} — already in Orphans/, skipping")
+            continue
+ 
+        try:
+            shutil.move(folder_path, dest)
+            print(f"  Moved {folder} → Orphans/")
+            orphan_moved += 1
+        except Exception as e:
+            print(f"  Error moving {folder}: {e}")
+ 
+    print(f"Orphan observations quarantined: {orphan_moved}")
+ 
+    ##############################################################################
+    # 3.5b: MOVE FULLY-UNCORRECTED OBSERVATIONS
+    # Only quarantine observations where EVERY extension on EVERY
+    # band is NONE.  Partially-corrected observations are kept 
+    # uvotimsum will exclude the bad extensions during summation... I think
+    print(f"\nScanning remaining observations for fully-uncorrected files...")
+ 
+    aspcorr_moved = 0
+ 
+    # Re-read top folders (some may have been moved to Orphans above)
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+ 
+    for folder in top_folders:
+        match = obsid_pattern.search(folder)
+        if not match:
+            continue
+        obsid = match.group(1)
+        folder_path = os.path.join(data_dir, folder)
+ 
+        # Scan all SK files and check if ANY extension is corrected
+        has_any_correction = False
+        found_any_sk = False
+ 
+        for root_d, _, fnames in os.walk(folder_path):
+            for fname in fnames:
+                if "_sk.img" not in fname:
+                    continue
+                band_found = False
+                for b in ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]:
+                    if b in fname:
+                        band_found = True
+                        break
+                if not band_found:
+                    continue
+ 
+                found_any_sk = True
+                fpath = os.path.join(root_d, fname)
+ 
+                try:
+                    with fits.open(fpath) as hdul:
+                        for hdu in hdul:
+                            naxis = hdu.header.get('NAXIS', 0)
+                            if naxis < 2:
+                                continue
+                            val = str(hdu.header.get("ASPCORR", "NONE")).strip().upper()
+                            if val in ("DIRECT", "UNICORR"):
+                                has_any_correction = True
+                                break
+                    if has_any_correction:
+                        break
+                except Exception:
+                    continue
+            if has_any_correction:
+                break
+ 
+        if not found_any_sk:
+            continue
+ 
+        # If at least one extension is corrected, keep it, uvotimsum
+        # will handle excluding the bad extensions during summation... I think?
+        if has_any_correction:
+            continue
+ 
+        # Fully uncorrected, move to NotASPCORR
+        dest = os.path.join(not_aspcorr_dir, folder)
+        if os.path.exists(dest):
+            print(f"  {obsid} — already in NotASPCORR/, skipping")
+            continue
+ 
+        try:
+            shutil.move(folder_path, dest)
+            print(f"  Moved {folder} -> NotASPCORR/  (all extensions NONE)")
+            aspcorr_moved += 1
+        except Exception as e:
+            print(f"  Error moving {folder}: {e}")
+ 
+    print(f"Fully-uncorrected observations quarantined: {aspcorr_moved}")
+ 
+    # Summary
+    total_quarantined = orphan_moved + aspcorr_moved
+    print(f"\n{'─' * 70}")
+    print(f"QUARANTINE SUMMARY")
+    print(f"  Orphans -> Orphans/          : {orphan_moved}")
+    print(f"  Fully NONE -> NotASPCORR/    : {aspcorr_moved}")
+    print(f"  Total quarantined            : {total_quarantined}")
+    remaining_folders = [f for f in os.listdir(data_dir)
+                         if os.path.isdir(os.path.join(data_dir, f))
+                         and f not in QUARANTINE_FOLDERS]
+    print(f"  Remaining observations       : {len(remaining_folders)}")
+    print(f"  (Partial corrections handled by uvotimsum exclude)")
+    print(f"{'─' * 70}")
+ 
+    #################################################################################
+    # STEP 4: PHOTOMETRY EXTRACTION  (summation -> uvotsource -> master data)
 
-# Create SkyCoord object from input RA and DEC.
-source_coords = SkyCoord(args.source_ra, args.source_dec, frame='icrs', unit=u.deg)
+    print("\n[PIPELINE STEP 4/4] Running photometry extraction...")
 
-# Start code to check closest tile to the source position.
-# Loop through tiles to calcualte separation for each tile center to source RA and DEC. 
-for ind in tiles.index:
-    tiles.loc[ind, 'Tile Name'] = tiles.loc[ind, 'Tile Name'].rstrip()
-    
-    # Create SkyCoord object for tile central RA and DEC
-    tile_ra = tiles.loc[ind, 'RA']
-    tile_dec = tiles.loc[ind, 'DEC']
-    tile_coords = SkyCoord(tile_ra, tile_dec, frame='icrs', unit=u.deg)
+    # Reload obs_table so it reflects corrections
+    table_path = os.path.join(save_dir, "observations_table.csv")
+    if os.path.exists(table_path):
+        obs_table = pd.read_csv(table_path)
 
-    # Calc separation and append to tiles DataFrame
-    sep = source_coords.separation(tile_coords).deg
-    tiles.loc[ind, 'Sep'] = sep
+    master_photometry = run_uvotsource_pipeline(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        source_reg=None,
+        bkg_reg=None,
+        target_ra=target_ra,       # NEW: passed through
+        target_dec=target_dec,     # NEW: passed through
+        automation_mode=False,
+    )
+ 
+    #################################################################################
+    # FINAL SUMMARY
 
-# Sort tiles by distance so that cleses target is on top.
-minimized_tiles = tiles.sort_values('Sep', ascending=True).reset_index(drop=True)
-min_dist = minimized_tiles.loc[0, 'Sep']
-closest_tile = minimized_tiles.loc[0, 'Tile Name']
-
-print(f'The Closest Tile is: {closest_tile}')
-print(f'Distance to Closest Tile is: {min_dist} deg')
-
-use_tile = False
-valid_tile = False
-
-# Check to see if this tile is 
-while use_tile == False:
-
-    uf = input(f'Do you wish to use {closest_tile}? [Y]')
-
-    if uf == "":
-        print(f"Using {closest_tile}")
-        use_tile = True
-    elif uf.upper == "Y":
-        use_tile = True
-    elif uf.upper == "N":
-        closest_tile = input(f'Which tile do you wish to use instead? ')
-        
-        # Check to make sure new tile is real.
-        while valid_tile == False:
-            filepath = f'./S-CUBED'
-        
-            all_filepaths = sorted(os.listdir(filepath))
-            if '.DS_Store' in all_filepaths:
-                all_filepaths.remove('.DS_Store')
-
-            if closest_tile in all_filepaths:
-                print(f"Using {closest_tile}")
-                valid_tile = True
-            else:
-                print("Tile not found. Please input a valid title.")
-            
-        use_tile = True
-    else:
-        print("Please pick a valid option [Y/N]")
-
-print("\nStarting aperture photometry.")
-
-# Define filepath for individual UVOT observations
-tile_filepath = f"./S-CUBED/{closest_tile}/UVOT"
-
-# Generate a list of observation ids. Remove ".DS_Store" if in list
-all_target_filepaths = sorted(os.listdir(tile_filepath))
-    
-if '.DS_Store' in all_target_filepaths:
-    all_target_filepaths.remove('.DS_Store')
-
-print('\nRe-running uvotdetect on all tiles')
-# Gotta re-run uvotdetect to account for any changes from aspect correction
-for path in tqdm(all_target_filepaths):
-    subpath = os.path.join(tile_filepath, path)
-    
-    sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-    outpath_fill = 'uvot/image/detect.fits'
-    exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-    detectpath_fill = 'uvot/image/detect.reg'
-    
-    full_sourcepath = os.path.join(subpath, sourcepath_fill)
-    full_outpath = os.path.join(subpath, outpath_fill)
-    full_exppath = os.path.join(subpath, exppath_fill)
-    full_detectpath = os.path.join(subpath, detectpath_fill)
-
-    uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
-
-    if args.verbose:
-        up.run_uvotdetect_verbose(uvotdetect_command)
-    else:
-        up.run_uvotdetect(uvotdetect_command)
-        
-print('All runs of uvotdetect are now complete.\n')
-
-# print('Starting initial run of uvotsource.')
-# # Loop through filepaths and run uvotsource
-# for obs in all_target_filepaths:
-
-#     # Write command for uvotsource using old region file if new one cannot be found
-#     uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
-
-#     if "-v" == True:
-#         up.run_uvotsource_verbose(uvotsource_command)
-#     else:
-#         up.run_uvotsource(uvotsource_command)
-# print('First run of aperture photometry complete.')
-
-print('Generating better region files.')
-#loop through all filepaths and generate new source region files if detect.fits exists
-for obs in tqdm(all_target_filepaths):
-
-    detect_path = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/detect.fits'
-    if os.path.exists(detect_path) == True:
-        up.write_source_reg_files(closest_tile, obs, args.source_name, args.source_ra, args.source_dec)
-    else:
-        continue
-
-print('Region files generated.\n')
-
-print('Running uvotsource on all files.')
-# Loop through filepaths and run uvotsource
-for obs in tqdm(all_target_filepaths):
-
-    #path to improved source region files
-    reg_filepath = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
-
-    #check to make sure new region file exists
-    if os.path.exists(reg_filepath) == True:
-        # Write command for uvotsource using new region file
-        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, reg_filepath, args.bkg_reg, args.source_name)
-    else:
-        # Write command for uvotsource using old region file if new one cannot be found
-        uvotsource_command = up.create_uvotsource_bash_command(closest_tile, obs, args.source_reg, args.bkg_reg, args.source_name)
-    
-    if "-v" == True:
-        up.run_uvotsource_verbose(uvotsource_command)
-    else:
-        up.run_uvotsource(uvotsource_command)
-
-print("Aperture photometry complete.\n")
-
-print("Grabbing Data for Output.")
-
-# Generate blank data used for general data storage
-source_data = pd.DataFrame()
-
-# Loop through all filepaths and grab fits data from photometry source.fits output
-for obs in tqdm(all_target_filepaths):
-
-    filename = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
-
-    if os.path.exists(filename) == True:
-        # Open fits file and grab data from it. Turn it into an array
-        with fits.open(filename) as hdul:
-            head = hdul[0].header
-            data = hdul[1].data
-
-            data_array = np.array(data[0])
-
-        # Re-shape data array into DataFrame
-        data_array = pd.DataFrame(data_array.reshape(1, 126), columns=data.names)
-        
-        # If this is first observation, create source_data DataFrame from data_array DataFrame. 
-        # If this is not the first observation, tack the data_array values onto the end of the source_data DataFrame
-        if source_data.empty == False:
-            source_data = pd.concat([source_data, data_array])
-        else:
-            source_data = data_array
-
-# Sort DataFrame by Time    
-source_data = source_data.sort_values('MET', ascending=True)
-source_data = source_data.reset_index(drop=True)
-
-# Make sure important values are floats
-source_data['AB_MAG'] = source_data['AB_MAG'].astype(float)
-source_data['AB_MAG_ERR'] = source_data['AB_MAG_ERR'].astype(float)
-source_data['MAG'] = source_data['MAG'].astype(float)
-source_data['MAG_ERR'] = source_data['MAG_ERR'].astype(float)
-source_data['MET'] = source_data['MET'].astype(float)
-source_data['EXPOSURE'] = source_data['EXPOSURE'].astype(float)
-
-# Convert MET values into MJD values
-cc = Clock()
-
-cc.met = list(source_data['MET'])
-cc.submit()
-times = Time(cc.utc, scale='utc').mjd
-
-source_data['MJD'] = times
-
-#remove any sources with magnitude of 99
-source_data = source_data[source_data['MAG'] < 99]
-
-#take mean and standard deviation of magnitude
-source_mean_mag = np.mean(source_data['MAG'])
-source_std_dev_mag = np.std(source_data['MAG'])
-
-#clip any values that are not within 5 sigma of the mean
-source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
-
-#copy just the values that we want to a sliced DataFrame
-uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR']].copy()
-
-outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
-
-#export DataFrame to text file
-with open(outpath, 'w') as f:
-    df_string = uvot_data_slice.to_string(header=False, index=False)
-    f.write(df_string)
-    
-print('Task Complete.')
-print(f'Outputting new file: {args.source_name}_uvot_data.txt')
-
-print("\nDeleting unnecessary files.")
-
-#loop through all filepaths and remove source.fits & source.reg files
-for obs in tqdm(all_target_filepaths):
-
-    #file names
-    source_fitsfile = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.fits'
-    source_regfile = f'./S-CUBED/{closest_tile}/UVOT/{obs}/uvot/image/{args.source_name}_source.reg'
-
-    #remove source.fits if it exists
-    if os.path.exists(source_fitsfile) == True:
-        os.remove(source_fitsfile)
-
-    #remove source.reg if it exists
-    if os.path.exists(source_regfile) == True:
-        os.remove(source_regfile)
-
-print("All source.fits files deleted.")
-
-print("\nUVOT Photometry has been generated.")
-print("\nExiting Photometry Pipeline.")
+    print("\n" + "=" * 70)
+    print("PIPELINE COMPLETE")
+    print("=" * 70)
+    print(f"Data directory: {data_dir}")
+    print(f"Save directory: {save_dir}")
+    print("\nGenerated files:")
+    print("  - observations_table.csv")
+    print("  - workload_summary.csv")
+    print("  - Orphans/ (quarantined orphan observations)")
+    print("  - NotASPCORR/ (quarantined uncorrected/partial observations)")
+    if aspectnone_dict and sum(aspectnone_dict.values()) > 0:
+        print("  - bad_frames.csv")
+    print("  - master_photometry.csv")
+    print("  - UVOT_Data_Analysis.xlsx")
+    print("=" * 70)
