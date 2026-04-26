@@ -28,9 +28,50 @@ from requests.auth import HTTPBasicAuth
 import tkinter as tk
 from tkinter import filedialog
 
-# Execution backend: "native" (mac) or "wsl" (windows)
-HEASOFT_BACKEND = "wsl"   # change to "native" on mac
+###############################################################################
+# PLATFORM / HEASOFT CONFIGURATION
+#
+# These settings control how HEASoft commands are invoked on your system.
+# Edit these to match your installation.
+###############################################################################
 
+# Backend: "wsl" (Windows) or "native" (Linux/macOS)
+HEASOFT_BACKEND = "native"   # set to "wsl" on Windows
+
+# ──────────────────────────────────────────────────────────────────────
+# WSL CONFIGURATION (only used if HEASOFT_BACKEND == "wsl")
+# ──────────────────────────────────────────────────────────────────────
+# The conda environment name that has HEASoft installed inside WSL.
+# If you installed HEASoft directly in WSL without conda, set to None
+# and use WSL_HEASOFT_INIT_SCRIPT below instead.
+WSL_CONDA_ENV = "henv"
+
+# Optional: explicit path INSIDE WSL to a HEASoft init script.
+# Only used if WSL_CONDA_ENV is None. Example:
+#   "/home/user/heasoft/x86_64-pc-linux-gnu-libc2.31/headas-init.sh"
+WSL_HEASOFT_INIT_SCRIPT = None
+
+# ──────────────────────────────────────────────────────────────────────
+# NATIVE CONFIGURATION (only used if HEASOFT_BACKEND == "native")
+# ──────────────────────────────────────────────────────────────────────
+# The native backend auto-detects HEASoft and CALDB from environment
+# variables ($HEADAS, $CALDB).  Leave these as None to use whatever is
+# in the environment.  Only set them if you want to override or if your
+# environment doesn't have them set (e.g. Jupyter launched from a non-
+# interactive shell that didn't load ~/.bashrc).
+NATIVE_HEADAS_PATH = None    # e.g. "/home/blentorvrella/Desktop/heasoft-6.36/x86_64-pc-linux-gnu-libc2.43"
+NATIVE_CALDB_PATH = None     # e.g. "/home/blentorvrella/caldb"
+#######################################################################
+# ASPECT CORRECTION RETRY LADDER
+# Parameters are tuned for UVOT. For other instruments, adjust these.
+# Each tuple is (side_buffer_arcmin, num_stars).
+# Attempts are tried in order; failed frames move to the next.
+#######################################################################
+ASPECT_RETRY_LADDER = [
+    (7, 50),   # Attempt 1: standard
+    (5, 30),   # Attempt 2: smaller search, fewer stars
+    (3, 15),   # Attempt 3: last resort
+]
 
 class DownloadError(Exception):
     """Raise when requests status quo does not return 200."""
@@ -41,31 +82,103 @@ class DownloadError(Exception):
 def run_heasoft_command(command):
     """
     Runs HEASOFT commands through the appropriate backend.
-    WSL ONLY - uses conda henv environment.
+
+    WSL: makes a WSL bash shell, activates conda env (WSL_CONDA_ENV)
+         or sources WSL_HEASOFT_INIT_SCRIPT, then runs the command.
+
+    NATIVE (Linux/macOS): Sources $HEADAS/headas-init.sh then runs the
+         command.  Auto-detects $HEADAS and $CALDB from environment
+         unless NATIVE_HEADAS_PATH / NATIVE_CALDB_PATH are set in the
+         config block.
     """
     print(f"\n[SYSTEM]: Running HEASOFT command...")
-    
+
     if HEASOFT_BACKEND == "wsl":
-        full_cmd = f"conda activate henv && {command}"
+        if WSL_CONDA_ENV:
+            prefix = f"conda activate {WSL_CONDA_ENV}"
+        elif WSL_HEASOFT_INIT_SCRIPT:
+            prefix = f"source {WSL_HEASOFT_INIT_SCRIPT}"
+        else:
+            raise RuntimeError(
+                "WSL backend requires WSL_CONDA_ENV or "
+                "WSL_HEASOFT_INIT_SCRIPT to be set in the config block."
+            )
+
+        full_cmd = f"{prefix} && {command}"
         result = subprocess.run(
             ["wsl", "bash", "-ic", full_cmd],
             text=True,
             capture_output=True,
         )
-        
-        if result.returncode != 0:
-            print("  [RESULT]: FAILED")
-            print("--- Error Details ---")
-            print(result.stderr)
-        else:
-            print("  [RESULT]: SUCCESS")
-        
-        return result
-    
+
     else:
-        raise NotImplementedError("backend not yet implemented for this function")  # THOMAS this is were you have to put your version of the backend that has to run
-        # Your "subprocess.run" I think it might just be "subprocess.run(['bash', '-i', '-c', uvotdetect_command],capture_output=True,text=True)" for you but I would rather have you do it
-        # All future functions like "run_fkeyprint" use this instead, as then there only has to be one check for the system.
+        # Native (Linux / macOS)
+        headas = NATIVE_HEADAS_PATH or os.environ.get("HEADAS")
+        if not headas:
+            raise RuntimeError(
+                "Native backend needs $HEADAS set in the environment, "
+                "or NATIVE_HEADAS_PATH set in the config block at the "
+                "top of this file. Run 'echo $HEADAS' in your terminal -- "
+                "if empty, source headas-init.sh before launching Python, "
+                "or add it to your ~/.bashrc."
+            )
+
+        init_script = os.path.join(headas, "headas-init.sh")
+        if not os.path.exists(init_script):
+            raise RuntimeError(
+                f"HEASoft init script not found at {init_script}"
+            )
+
+        # CALDB: config var > env var
+        caldb = NATIVE_CALDB_PATH or os.environ.get("CALDB", "")
+        if not caldb:
+            raise RuntimeError(
+                "Native backend needs $CALDB set in the environment, "
+                "or NATIVE_CALDB_PATH set in the config block."
+            )
+
+        # Derive CALDB config files (standard layout)
+        caldb_config = (os.environ.get("CALDBCONFIG")
+                        or f"{caldb}/software/tools/caldb.config")
+        caldb_alias = (os.environ.get("CALDBALIAS")
+                       or f"{caldb}/software/tools/alias_config.fits")
+
+        # Build the full command:
+        #   HEADASNOQUERY=1, HEADASPROMPT=/dev/null  -> tools won't prompt
+        #   CALDB / CALDBCONFIG / CALDBALIAS         -> CALDB lookups work
+        #   PFILES with per-PID dir                  -> avoid race conditions
+        full_cmd = (
+            f"export HEADASNOQUERY=1 && "
+            f"export HEADASPROMPT=/dev/null && "
+            f"export CALDB='{caldb}' && "
+            f"export CALDBCONFIG='{caldb_config}' && "
+            f"export CALDBALIAS='{caldb_alias}' && "
+            f"source '{init_script}' && "
+            f"export PFILES=\"/tmp/pfiles_$$;${{HEADAS}}/syspfiles\" && "
+            f"mkdir -p /tmp/pfiles_$$ && "
+            f"{command}"
+        )
+
+        result = subprocess.run(
+            ["bash", "-c", full_cmd],
+            text=True,
+            capture_output=True,
+        )
+
+    if result.returncode != 0:
+        print("  [RESULT]: FAILED")
+        print("--- Error Details ---")
+        print(result.stderr)
+    elif result.stderr and "ERROR" in result.stderr.upper():
+        # HEASoft tools sometimes exit 0 even on internal failure.
+        # Check stderr for "ERROR" string.
+        print("  [RESULT]: FAILED (HEASoft error in stderr)")
+        print("--- Error Details ---")
+        print(result.stderr)
+    else:
+        print("  [RESULT]: SUCCESS")
+
+    return result
 
 
 # UTILS FOR CROSS-PLATFORM PATHS 
@@ -159,7 +272,7 @@ def run_uvotdetect_verbose(uvotdetect_command):
 
 #WSL UVOTDETECT version, Thomas if you so desire and think my logical bellow is good and would like to use it, you can edit to the code to add
 # If WSL elements, As currently this is later called with a If WSL rather then being built in.
-def batch_run_uvotdetect_wsl(base_path):
+def batch_run_uvotdetect(base_path):
     
 # The six UVOT filter bands we care about
     BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
@@ -218,58 +331,39 @@ def batch_run_uvotdetect_wsl(base_path):
             # Get just the filename (no directory) for the HEASOFT command
             sk_filename = os.path.basename(sk_file_path)
 
-            if ext_count > 1:
-                # MULTI-EXTENSION: create a detect file for EACH extension
+            if ext_count > 1: #Multiextensions
                 print(f" Creating detect files for {ext_count} extensions...")
-
                 for ext in range(1, ext_count + 1):
-                    # Name the output file with the extension number I.E. uw1_detect_ext1.fits, uw1_detect_ext2.fits
                     detect_ext = f"{band}_detect_ext{ext}.fits"
                     detect_ext_path = os.path.join(root, detect_ext)
-
-                    # Skip if this extension's detect file already exists
                     if os.path.exists(detect_ext_path):
-                        print(f" Extension {ext} detect exists — skipping")
+                        print(f" Extension {ext} detect exists - skipping")
                         continue
 
                     print(f" Running detect on extension {ext}")
 
-                    detect_ext_filename = os.path.basename(detect_ext_path)
-
-                    #the uvotdetect command.
                     uvotdetect_cmd = (
                         f"cd '{img_dir_heasoft}' && "
-                        f"uvotdetect << end\n"
-                        f"{sk_filename}[{ext}]\n"
-                        f"{detect_ext_filename}\n"
-                        f"NONE\n"
-                        f"3\n"
-                        f"end"
+                        f"uvotdetect "
+                        f"infile='{sk_filename}[{ext}]' "
+                        f"outfile='{detect_ext}' "
+                        f"expfile=NONE threshold=3"
                     )
                     run_heasoft_command(uvotdetect_cmd)
-
-            else:
-                # SINGLE EXTENSION: create one detect file for the band, I.E. uw1_detect.fits
+            else:  # Single extensions
                 detect_base = f"{band}_detect.fits"
                 detect_path = os.path.join(root, detect_base)
-
                 if os.path.exists(detect_path):
-                    print(" Detect file already exists — skipping")
+                    print(" Detect file already exists - skipping")
                     continue
 
-                detect_filename = os.path.basename(detect_path)
-
                 print(" Running single-extension detect...")
-
-                # No [ext] suffix needed the whole file is one extension
                 uvotdetect_cmd = (
                     f"cd '{img_dir_heasoft}' && "
-                    f"uvotdetect << end\n"
-                    f"{sk_filename}\n"
-                    f"{detect_filename}\n"
-                    f"NONE\n"
-                    f"3\n"
-                    f"end"
+                    f"uvotdetect "
+                    f"infile='{sk_filename}' "
+                    f"outfile='{detect_base}' "
+                    f"expfile=NONE threshold=3"
                 )
                 run_heasoft_command(uvotdetect_cmd)
 
@@ -326,23 +420,14 @@ def run_fappend_verbose(fappend_command):
 ####################################################################################
 
 
-############################################ Bellow is unicorr for Windows 
 
 
-def create_uvotunicorr_full_command_wsl(ref_frame, obs_frame, band, ref_snapshot, obs_snapshot, obspath=None):
+def create_uvotunicorr_command(ref_frame, obs_frame, band, ref_snapshot,
+                               obs_snapshot, obspath=None):
     """
-    WSL version of uvotunicorr command creator.
-    
-    Args:
-        ref_frame: Reference ObsID
-        obs_frame: Observation ObsID  
-        band: Filter band
-        ref_snapshot: Extension number for REFERENCE
-        obs_snapshot: Extension number for OBSERVATION
-        obspath: Directory path
+    Build the uvotunicorr command string. Works for both backends -
+    prepare_path() is a no-op on native, WSL translation on Windows.
     """
-    
-    # Build file paths
     if obspath:
         ref_filepath = os.path.join(obspath, f'sw{ref_frame}{band}_sk.img')
         obs_filepath = os.path.join(obspath, f'sw{obs_frame}{band}_sk.img')
@@ -353,18 +438,15 @@ def create_uvotunicorr_full_command_wsl(ref_frame, obs_frame, band, ref_snapshot
         obs_filepath = f'sw{obs_frame}{band}_sk.img'
         ref_reg_filepath = 'ref.reg'
         obs_reg_filepath = 'obs.reg'
-    
-    # Convert paths for WSL
+
     ref_filepath = prepare_path(ref_filepath)
     obs_filepath = prepare_path(obs_filepath)
     ref_reg_filepath = prepare_path(ref_reg_filepath)
     obs_reg_filepath = prepare_path(obs_reg_filepath)
-    
-    # Add DIFFERENT extensions for ref vs obs
-    ref_filepath += f'[{ref_snapshot}]'  # Use ref's extension
-    obs_filepath += f'[{obs_snapshot}]'  # Use obs's extension, the used to be matching that was a bad idea.
-    
-    # Build command
+
+    ref_filepath += f'[{ref_snapshot}]'
+    obs_filepath += f'[{obs_snapshot}]'
+
     command = (
         f"uvotunicorr "
         f"obsfile='{obs_filepath}' "
@@ -372,7 +454,6 @@ def create_uvotunicorr_full_command_wsl(ref_frame, obs_frame, band, ref_snapshot
         f"obsreg='{obs_reg_filepath}' "
         f"refreg='{ref_reg_filepath}'"
     )
-    
     return command
 
 
@@ -1035,60 +1116,277 @@ def create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=None):
     with open(obs_filename, mode='w', encoding='utf-8') as obsfile:
         obsfile.write(obs_reg_text)
 
-def write_source_reg_files(tile_name, obsid, source_name, source_ra, source_dec):
+def write_source_reg_files(base_path, target_ra, target_dec,
+                           save_path=None,
+                           source_radius=5.0, max_offset=10.0,
+                           output_name="auto_source.reg"):
+    """
+    Auto-generate a source region file per observation directory.
 
-    #generate source coordinates
-    source_coords = SkyCoord(source_ra, source_dec, unit='deg', frame='icrs')
+    Hello thomas, some changes had to be made, the normal ones being
+    not hard coding it ad having it loop through the data.
+    you had it pulling from the same detect.fits file for everything,
+    I cant do that because I have summed files that need new detect.fits
+    since the position on the star(especially after aspect correction)
+    may be very different, so I use/ make a detect.fits for each.
     
-    trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
-    detect_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/detect.fits'
+    """
+    source_coords = SkyCoord(target_ra, target_dec, unit='deg', frame='icrs')
+    QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"}
+    BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+
+    created = 0
+    used_corrected_detect = 0
+    used_old_detect = 0
+    skipped_no_source = 0
+    skipped_no_detect = 0
+    corrected_detects_run = 0
+
+    print(f"Generating source regions for target RA={target_ra:.6f}, Dec={target_dec:.6f}")
+
+    #
+    # Run uvotdetect on summed images that don't have detect
+    # files yet. we need this for the catalogs that match
+    # the summed image coordinate system. I also just figured out
+    # we also need to do this for anything that was aspect corrected.
+    #
     
-    #generate  blank dataframe
-    detected_frame = pd.DataFrame(columns=['RA', 'DEC', 'SEP'])
-    
-    #open detect.fits
-    with fits.open(detect_filepath) as hdul:
-        head = hdul[0].header
-        data = hdul[1].data
+    # Track files that had to be quarantined due to detect failures
+    detect_failures = []
 
-    #loop through all the sources in detect.fits, append coordinates to dataframe
-    for ind, val in enumerate(data):
-        detected_frame.loc[ind, 'RA'] = val['RA']
-        detected_frame.loc[ind, 'DEC'] = val['DEC']
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
 
-    #new .reg filename 
-    reg_filename = f'{trunc_obs_filepath + source_name}_source.reg'
+        obsid_match = re.search(r"(\d{11})", root)
+        obsid = obsid_match.group(1) if obsid_match else "?"
 
-    #loop through all the stars in detect.fits
-    #find the closest one to coordinate positions of source
-    #use those coords to write a new .reg file out in the obs filder
-    if len(detected_frame.index) >= 1:
-        for ind in detected_frame.index:
-            
-            #generate a SkyCoord object for each star
-            ra = detected_frame.loc[ind, 'RA']
-            dec = detected_frame.loc[ind, 'DEC']
-            
-            star_coords = SkyCoord(ra, dec, unit='deg', frame='fk5')
+        current_files = os.listdir(root)
 
-            #calculate separation to source and append to dataframe
-            sep = star_coords.separation(source_coords).to(u.arcsecond)
-            detected_frame.loc[ind, 'SEP'] = sep
+        for band in BANDS:
+            # Find the file uvotsource will actually use
+            summed_file = f"{band}_ex_summed.fits"
+            sk_img = f"sw{obsid}{band}_sk.img"
+            sk_gz = f"sw{obsid}{band}_sk.img.gz"
 
-        #look for star with min separation and grab coordinates of that star
-        min_sep = detected_frame['SEP'].idxmin()
+            input_file = None
+            if summed_file in current_files:
+                input_file = summed_file
+            elif sk_img in current_files:
+                input_file = sk_img
+            elif sk_gz in current_files:
+                input_file = sk_gz
+            else:
+                continue
 
-        min_ra = detected_frame.loc[min_sep, 'RA']
-        min_dec = detected_frame.loc[min_sep, 'DEC']
+            # The detect file for this input
+            detect_file = f"{band}_corrected_detect.fits"
+            detect_path = os.path.join(root, detect_file)
 
-        #check to see how far away the nearest star is before writing a region file
-        #if distance is > 5 arcseconds, no new region file is created.
-        if detected_frame.loc[min_sep, 'SEP'] <= (10 * u.arcsecond):
-            #generate new region text and write out file
-            new_reg_text = f'# Region file format: DS9 version 4.1\nfk5\ncircle({min_ra},{min_dec},5.000")'
-        
-            with open(reg_filename, mode='w', encoding='utf-8') as regfile:
-                regfile.write(new_reg_text)
+            # Skip if already created
+            if os.path.exists(detect_path):
+                continue
+
+            print(f"Running uvotdetect on {obsid}/{band} ({input_file})...")
+
+            if HEASOFT_BACKEND == "wsl":
+                wsl_dir = prepare_path(root)
+                cmd = (f"cd '{wsl_dir}' && "
+                       f"uvotdetect infile='{input_file}' "
+                       f"outfile='{detect_file}' "
+                       f"expfile=NONE threshold=3")
+            else:
+                cmd = (f"cd '{root}' && "
+                       f"uvotdetect infile='{input_file}' "
+                       f"outfile='{detect_file}' "
+                       f"expfile=NONE threshold=3")
+
+            run_heasoft_command(cmd)
+            time.sleep(2)
+
+            # Retry once if it failed
+            if not os.path.exists(detect_path):
+                print(f"Retrying {obsid}/{band}...")
+                time.sleep(3)
+                run_heasoft_command(cmd)
+                time.sleep(2)
+
+            if os.path.exists(detect_path):
+                corrected_detects_run += 1
+            else:
+                # Failed twice — move the input file to a subfolder
+                # so it can't be used with a mismatched source region
+                print(f"❌ uvotdetect failed twice for {obsid}/{band}")
+                print(f"Moving {input_file} to DetectFailed/")
+
+                failed_dir = os.path.join(root, "DetectFailed")
+                os.makedirs(failed_dir, exist_ok=True)
+
+                src_path = os.path.join(root, input_file)
+                dst_path = os.path.join(failed_dir, input_file)
+
+                try:
+                    shutil.move(src_path, dst_path)
+                    print(f"Moved: {input_file}")
+                except Exception as e:
+                    print(f"Error moving: {e}")
+
+                detect_failures.append({
+                    'ObsID': obsid,
+                    'Band': band,
+                    'File': input_file,
+                    'Directory': root,
+                })
+
+    if corrected_detects_run > 0:
+        print(f"  Created {corrected_detects_run} new detect files from corrected images")
+
+    # Save detect failure report
+    if detect_failures:
+        print(f"\n  WARNING: {len(detect_failures)} files moved to DetectFailed/")
+        fail_df = pd.DataFrame(detect_failures)
+        fail_path = os.path.join(save_path, "detect_failures.csv")
+        fail_df.to_csv(fail_path, index=False)
+        print(f"Failure report saved: {fail_path}")
+
+    # 
+    # For each observation directory, find the best detect file
+    # and centroid the source from it. First use {band}_corrected_detect.fits
+    # if that isnt in the folder use the normal {band}_detect.fits / {band}_detect_ext1.fits
+    #
+    print("  Centroiding source positions...")
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
+
+        obsid_match = re.search(r"(\d{11})", root)
+        obsid = obsid_match.group(1) if obsid_match else "?"
+
+        # Refresh file list (detect files may have just been created)
+        current_files = os.listdir(root)
+
+        best_detect = None
+        is_corrected = False
+
+        # First: look for corrected detect file (ALWAYS preferred)
+        for f in current_files:
+            if f.endswith("_corrected_detect.fits"):
+                detect_path = os.path.join(root, f)
+                try:
+                    with fits.open(detect_path) as hdul:
+                        if len(hdul) >= 2 and hdul[1].data is not None:
+                            if len(hdul[1].data) > 0:
+                                best_detect = detect_path
+                                is_corrected = True
+                                break
+                except Exception:
+                    continue
+
+        # Second: only if no corrected detect, fall back to old detect
+        if best_detect is None:
+            best_count = 0
+            for f in current_files:
+                if f.endswith("_detect.fits") or f.endswith("_detect_ext1.fits"):
+                    if "_corrected_detect" in f:
+                        continue
+                    detect_path = os.path.join(root, f)
+                    try:
+                        with fits.open(detect_path) as hdul:
+                            if len(hdul) >= 2 and hdul[1].data is not None:
+                                n = len(hdul[1].data)
+                                if n > best_count:
+                                    best_detect = detect_path
+                                    best_count = n
+                                    is_corrected = False
+                    except Exception:
+                        continue
+
+        # No detect file at all — skip this directory
+        if best_detect is None:
+            print(f"[{obsid}] No detect file found — skipping")
+            skipped_no_detect += 1
+            continue
+
+        # Open detect file and find closest source to target
+        try:
+            with fits.open(best_detect) as hdul:
+                data = hdul[1].data
+
+                detected_frame = pd.DataFrame(columns=['RA', 'DEC', 'SEP'])
+
+                for ind, val in enumerate(data):
+                    detected_frame.loc[ind, 'RA'] = val['RA']
+                    detected_frame.loc[ind, 'DEC'] = val['DEC']
+
+                if len(detected_frame.index) < 1:
+                    print(f"    [{obsid}] Detect file empty — skipping")
+                    skipped_no_detect += 1
+                    continue
+
+                # Calculate separation from target to each detected source
+                # Thomas might recognize this part.
+                for ind in detected_frame.index:
+                    # Generate a SkyCoord object for each star
+                    ra = detected_frame.loc[ind, 'RA']
+                    dec = detected_frame.loc[ind, 'DEC']
+
+                    star_coords = SkyCoord(ra, dec, unit='deg', frame='fk5')
+                    # Calculate separation to source and append to dataframe
+                    sep = star_coords.separation(source_coords).to(u.arcsecond)
+                    detected_frame.loc[ind, 'SEP'] = sep
+
+                # Look for star with min separation and grab coordinates
+                min_sep = detected_frame['SEP'].idxmin()
+
+                min_ra = detected_frame.loc[min_sep, 'RA']
+                min_dec = detected_frame.loc[min_sep, 'DEC']
+                min_dist = detected_frame.loc[min_sep, 'SEP']
+
+                # Check to see how far away the nearest star is before
+                # writing a region file. If too far, no region is created
+                # and uvotsource will skip this observation.
+                if min_dist <= (max_offset * u.arcsecond):
+                    reg_path = os.path.join(root, output_name)
+                    reg_text = (
+                        f'# Region file format: DS9 version 4.1\n'
+                        f'fk5\n'
+                        f'circle({min_ra},{min_dec},{source_radius}")\n'
+                    )
+                    with open(reg_path, 'w') as f:
+                        f.write(reg_text)
+
+                    created += 1
+                    if is_corrected:
+                        used_corrected_detect += 1
+                    else:
+                        used_old_detect += 1
+                else:
+                    print(f"[{obsid}] Nearest source {min_dist:.1f} away "
+                          f"(>{max_offset}\") — no region written")
+                    skipped_no_source += 1
+
+        except Exception as e:
+            print(f"[{obsid}] Error reading detect file: {e}")
+            skipped_no_detect += 1
+            continue
+
+    print(f"\n  Source region summary:")
+    print(f" Created: {created}")
+    print(f" Used corrected detect centroid: {used_corrected_detect}")
+    print(f" Used old detect centroid: {used_old_detect}")
+    print(f" Skipped (no source within {max_offset}\"): {skipped_no_source}")
+    print(f" Skipped (no detect file): {skipped_no_detect}")
+
+
 
 def find_aspect_none_snapshots(path_to_frame):
 
@@ -1841,7 +2139,7 @@ def refresh_observations_table_after_correction(obs_table, corrected_obsids, ban
 
 
     
-def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bkg_reg=None, automation_mode=True):
+def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bkg_reg=None, target_ra=None, target_dec=None, automation_mode=True):
     BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
 
     # Build a set of smeared OBSIDs from obs_table so we can skip them.
@@ -1853,79 +2151,6 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
         smeared_obsids = set(smeared_rows['ObsID'].astype(str).unique())
         if smeared_obsids:
             print(f"Will skip {len(smeared_obsids)} smeared OBSIDs")
-
-    #############################################################################
-    # GET REGION FILES, TEMPORARY SOLUTION (WILL BE REPLACED, SOONISH?)
-    
- 
-    if source_reg is None or bkg_reg is None:
-        print("\n" + "=" * 70)
-        print("REGION FILE SELECTION  (temporary — will be automated later)")
-        print("=" * 70)
-        print("Please select the DS9 region files for uvotsource.")
-        print("  • Source region  — small circle centred on your target")
-        print("  • Background region — annulus / circle in a source-free area\n")
-
-        root_tk = tk.Tk()
-        root_tk.withdraw()
-
-        if source_reg is None:
-            source_reg = filedialog.askopenfilename(
-                title="Select SOURCE region file (.reg)",
-                filetypes=[("Region files", "*.reg"), ("All files", "*.*")],
-                initialdir=os.path.dirname(base_path),
-            )
-            if not source_reg:
-                print("No source region file selected — aborting uvotsource step.")
-                return None
-
-        if bkg_reg is None:
-            bkg_reg = filedialog.askopenfilename(
-                title="Select BACKGROUND region file (.reg)",
-                filetypes=[("Region files", "*.reg"), ("All files", "*.*")],
-                initialdir=os.path.dirname(base_path),
-            )
-            if not bkg_reg:
-                print("No background region file selected — aborting uvotsource step.")
-                return None
-
-        try:
-            root_tk.destroy()
-        except Exception:
-            pass
-
-    # Validate that the files exist
-    if not os.path.exists(source_reg):
-        raise FileNotFoundError(f"Source region file not found: {source_reg}")
-    if not os.path.exists(bkg_reg):
-        raise FileNotFoundError(f"Background region file not found: {bkg_reg}")
-
-    src_reg_name = os.path.basename(source_reg)
-    bkg_reg_name = os.path.basename(bkg_reg)
-
-    print(f"\nSource region : {source_reg}")
-    print(f"Background region: {bkg_reg}")
-
-    ###############################################################################
-    # Copy and paste regions (Thomas said not to do this, as he perfers calling back a centeral HQ of sort, I however Have already done this and it works... So)
-
-    print("\n" + "-" * 70)
-    print("Copying region files to observation directories...")
-    print("-" * 70)
-
-    copy_count = 0
-    for root_dir, dirs, files in os.walk(base_path):
-        # Match directories ending with uvot/image (universal)
-        normalised = os.path.normpath(root_dir)
-        if normalised.endswith(os.path.join("uvot", "image")):
-            try:
-                shutil.copy2(source_reg, root_dir)
-                shutil.copy2(bkg_reg, root_dir)
-                copy_count += 1
-            except Exception as e:
-                print(f"  Warning — could not copy to {root_dir}: {e}")
-
-    print(f"Copied region files to {copy_count} uvot/image folders.\n")
 
     
     ###########################################################################
@@ -2026,20 +2251,13 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
             wsl_d = prepare_path(img_dir)
             ecmd = (f"cd '{wsl_d}' && "
                     f"uvotimsum infile='{ex_file}' "
-                    f"outfile='{exp_summed_outfile}' "
-                    f"method=EXPMAP")
-            if exclude_str:
-                ecmd += f" exclude={exclude_str}"
-        else: ##MAC Version does here, I kinda guessed about how it would look like dont trust me on this.
+                    f"outfile='{exp_summed_outfile}' method=EXPMAP")
+        else:
             ecmd = (f"cd '{img_dir}' && "
                     f"uvotimsum infile='{ex_file}' "
-                    f"outfile='{exp_summed_outfile}' "
-                    f"method=EXPMAP")
-            if exclude_str:
-                ecmd += f" exclude={exclude_str}"
- 
-        print(f"    [expmap] {ecmd}")
- 
+                    f"outfile='{exp_summed_outfile}' method=EXPMAP")
+        if exclude_str:
+            ecmd += f" exclude={exclude_str}"
         run_heasoft_command(ecmd)
         time.sleep(1)
         return os.path.exists(exp_summed_outpath)
@@ -2145,21 +2363,21 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
                 wsl_img_dir = prepare_path(img_dir)
                 if exclude_str:
                     sum_cmd = (f"cd '{wsl_img_dir}' && "
-                              f"uvotimsum infile='{img_file}' "
-                              f"outfile='{summed_outfile}' "
-                              f"exclude={exclude_str}")
+                               f"uvotimsum infile='{img_file}' "
+                               f"outfile='{summed_outfile}' "
+                               f"exclude={exclude_str}")
                 else:
                     sum_cmd = (f"cd '{wsl_img_dir}' && "
-                              f"uvotimsum '{img_file}' '{summed_outfile}'")
-            else: #MACOS goes here, kinda guessed again.
+                               f"uvotimsum '{img_file}' '{summed_outfile}'")
+            else:
                 if exclude_str:
                     sum_cmd = (f"cd '{img_dir}' && "
-                              f"uvotimsum infile='{img_file}' "
-                              f"outfile='{summed_outfile}' "
-                              f"exclude={exclude_str}")
+                               f"uvotimsum infile='{img_file}' "
+                               f"outfile='{summed_outfile}' "
+                               f"exclude={exclude_str}")
                 else:
                     sum_cmd = (f"cd '{img_dir}' && "
-                              f"uvotimsum '{img_file}' '{summed_outfile}'")
+                               f"uvotimsum '{img_file}' '{summed_outfile}'")
  
             result = run_heasoft_command(sum_cmd)
  
@@ -2194,6 +2412,81 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
     print(f" Not needed         : {sum_not_needed} (single extension or ≤2)")
     print(f" Failed             : {sum_failed}\n")
 
+
+
+
+
+
+    #############################################################################
+    # GET REGION FILES, TEMPORARY SOLUTION (WILL BE REPLACED, SOONISH?)
+    
+    # SOURCE REGION: Auto-generate per observation
+    # Uses detect files to find the source centroid in each frame.
+    # This is better than a single fixed region because the source
+    # position shifts between observations due to pointing jitter.
+    if source_reg is None:
+        print("=" * 70)
+        print("GENERATING SOURCE REGIONS")
+        print("=" * 70)
+ 
+        if target_ra is None or target_dec is None:
+            raise ValueError(
+                "target_ra and target_dec are required when source_reg is None. "
+                "These should be collected in setup_data_directories() and "
+                "passed through run_uvot_pipeline()."
+            )
+ 
+        src_reg_name = "auto_source.reg"
+        write_source_reg_files(base_path, target_ra, target_dec,
+                               save_path=save_path,
+                               output_name=src_reg_name)
+    else:
+        if not os.path.exists(source_reg):
+            raise FileNotFoundError(f"Source region file not found: {source_reg}")
+        src_reg_name = os.path.basename(source_reg)
+        print(f"Using provided source region: {source_reg}")
+        print("Copying to observation directories...")
+        for root_dir, dirs, files in os.walk(base_path):
+            normalised = os.path.normpath(root_dir)
+            if normalised.endswith(os.path.join("uvot", "image")):
+                try:
+                    shutil.copy2(source_reg, root_dir)
+                except Exception as e:
+                    print(f"  Warning — could not copy to {root_dir}: {e}")
+ 
+    # --- BACKGROUND REGION (temporary — manual selection) ---
+    if bkg_reg is None:
+        # Auto generate background region
+        # source free positions, then checks each candidate against
+        # all observation exposure maps to pick the best one.
+        bkg_result = generate_best_background(
+            base_path, save_path, target_ra, target_dec
+        )
+        if bkg_result is None:
+            print("Background generation failed — aborting.")
+            return None
+        bkg_reg_name = "auto_bkg.reg"
+    else:
+        # Manual background provided, copy to all directories
+        if not os.path.exists(bkg_reg):
+            raise FileNotFoundError(f"Background region file not found: {bkg_reg}")
+
+        bkg_reg_name = os.path.basename(bkg_reg)
+        print(f"Background region: {bkg_reg}")
+
+        print("Copying background region to observation directories...")
+        copy_count = 0
+        for root_dir, dirs, files in os.walk(base_path):
+            normalised = os.path.normpath(root_dir)
+            if normalised.endswith(os.path.join("uvot", "image")):
+                try:
+                    shutil.copy2(bkg_reg, root_dir)
+                    copy_count += 1
+                except Exception as e:
+                    print(f"  Warning — could not copy to {root_dir}: {e}")
+        print(f"Copied background region to {copy_count} folders.\n")
+
+    
     #################################################################################
     # rUN uvotsource on each  obsid and band
 
@@ -2332,9 +2625,6 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
 
             if HEASOFT_BACKEND == "wsl":
                 wsl_img_dir = prepare_path(img_dir)
-
-                # Use heredoc-style interactive input for uvotsource
-                # (same approach as the standalone uvotsource script)
                 uvotsource_cmd = (
                     f"cd '{wsl_img_dir}' && "
                     f"uvotsource image='{input_file}' "
@@ -2347,29 +2637,21 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
                     f"outfile='{finalsource_file}' "
                     f"cleanup=YES clobber=YES chatter=1"
                 )
-
-                result = run_heasoft_command(uvotsource_cmd)
-
             else:
-                # MACOS?
                 uvotsource_cmd = (
-                    f"bash -c '"
-                    f"cd \"{img_dir}\" && "
-                    f"uvotsource "
-                    f"image=\"{input_file}\" "
-                    f"srcreg=\"{src_reg_name}\" "
-                    f"bkgreg=\"{bkg_reg_name}\" "
+                    f"cd '{img_dir}' && "
+                    f"uvotsource image='{input_file}' "
+                    f"srcreg='{src_reg_name}' "
+                    f"bkgreg='{bkg_reg_name}' "
                     f"sigma=5 "
-                    f"expfile=\"{exp_file}\" "
+                    f"expfile='{exp_file}' "
                     f"zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB "
                     f"syserr=NO frametime=DEFAULT apercorr=NONE output=ALL "
-                    f"outfile=\"{finalsource_file}\" "
+                    f"outfile='{finalsource_file}' "
                     f"cleanup=YES clobber=YES chatter=1"
-                    f"'"
                 )
-                result = run_heasoft_command(uvotsource_cmd)
 
-            # Brief pause to let the filesystem sync (especially for WSL)
+            run_heasoft_command(uvotsource_cmd)
             time.sleep(1)
 
             # Check result
@@ -2481,7 +2763,14 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
 
     #################################################################################
     # Write Excel workbook (All_Data + per-band sheets + Summary)
-    
+
+    # ALWAYS write CSV first as a safety net (xlsx can fail mid-write
+    # leaving an unreadable file).  CSV is plain text, can't corrupt.
+    if not df_all.empty:
+        csv_path = os.path.join(save_path, "master_photometry.csv")
+        df_all.to_csv(csv_path, index=False)
+        print(f"  Master CSV saved: {csv_path}")
+        
     excel_path = os.path.join(save_path, "UVOT_Data_Analysis.xlsx")
     try:
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
@@ -2594,11 +2883,770 @@ def diagnose_obs_table(obs_table):
                 print(f"    {repr(v)}: {len(bd[bd['Extension_Status'] == v])}")
 
 
+
+######################################################
+"""
+auto_background_generator.py — Automatic Background Region Generation
+
+Based on Kyles's find_sources() and find_valid_background() from
+his background generation code. Changes from Kyles's version:
+  - fitsio.read() replaced with fits.getdata() (fitsio won't install on Windows)
+  - find_valid_background collects up to N candidates instead of returning 
+    at the first valid position, however to relabibly do this, it checks all permutations....
+    So it takes alittle while.
+  - Added FOV checking against all observations' exposure maps
+  - Added best-candidate selection and diagnostic CSV output
+"""
+
+import os
+import re
+import numpy as np
+import pandas as pd
+
+import sep
+
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+
+from regions import CircleSkyRegion
+
+
+###############################################################################
+# SOURCE DETECTION — find_sources with fitsio replaced
+###############################################################################
+
+def find_sources(filename, threshold=1, logscale=True, shape="circle"):
+    """
+    Finds all excess UV sources above the background.
+    
+    This is Kyles's find_sources() with fitsio.read() replaced by
+    fits.getdata(). All other logic is identical.
+
+    the Parameters are:
+    filename : Name of fits UV image file 
+    threshold : float, Threshold sigma for source detection (default is 1.0)
+    logscale : bool, Search for sources using logarithmic (default is True)
+    shape : str, Return shape of sources with 'circle' or 'ellipse'
+
+    It will try to Return
+    excess : structured array, Sources in fk5 degrees. Circle: (RA, DEC, R). Ellipse: (RA, DEC, SMaj, SMin, Angl)
+    excess_pxl : structured array, Sources in pixels: (X, Y, a, b, theta)
+    """
+
+    if not os.path.isfile(filename):
+        raise ValueError(f'{filename} could not be found.')
+    if threshold <= 0:
+        raise ValueError('Threshold must be > 0.')
+
+    # CHANGED: fitsio.read(filename) to fits.getdata()
+    # Read the first image extension
+    data = None
+    hdu_idx = None
+    with fits.open(filename) as hdul:
+        for i, hdu in enumerate(hdul):
+            if hdu.header.get('NAXIS', 0) >= 2:
+                data = hdu.data.astype(np.float64)
+                w = WCS(hdu.header)
+                hdu_idx = i
+                break
+
+    if data is None:
+        raise ValueError(f'No 2D image extension found in {filename}')
+
+    # Log or linear
+    if logscale:
+        lindata = data
+        with np.errstate(invalid='ignore', divide='ignore'):
+            data = np.log10(np.array(data))
+    else:
+        lindata = data
+
+    # Ensure C-contiguous (SEP requirement)
+    data = np.ascontiguousarray(data)
+
+    # Background estimation
+    bkg = sep.Background(data)
+
+    # subtract the background
+    data_sub = data - bkg
+    nonSUB = [d for d in np.array(data_sub).flatten() if not np.isneginf(d)]
+
+    # total objects detected
+    objects = sep.extract(data_sub, threshold, err=bkg.globalrms)
+
+    # Allocate structured arrays
+    n = len(objects)
+
+    if shape == "circle":
+        sky_dtype = np.dtype([
+            ("RA", "f8"),
+            ("DEC", "f8"),
+            ("R", "f8")
+        ])
+    else:
+        sky_dtype = np.dtype([
+            ("RA", "f8"),
+            ("DEC", "f8"),
+            ("SMaj", "f8"),
+            ("SMin", "f8"),
+            ("Angl", "f8")
+        ])
+
+    pixel_dtype = np.dtype([
+        ("X", "f8"),
+        ("Y", "f8"),
+        ("a", "f8"),
+        ("b", "f8"),
+        ("theta", "f8")
+    ])
+
+    excess = np.zeros(n, dtype=sky_dtype)
+    excess_pxl = np.zeros(n, dtype=pixel_dtype)
+
+    # Fill arrays
+    for i, obj in enumerate(objects):
+
+        x = float(obj["x"])
+        y = float(obj["y"])
+
+        c0 = w.pixel_to_world(x, y)
+        ra = c0.fk5.ra.deg
+        dec = c0.fk5.dec.deg
+
+        a3 = float(3 * obj["a"])   # 3-sigma semi-major (pixels)
+        b3 = float(3 * obj["b"])
+        theta_deg = obj["theta"] * 180 / np.pi
+
+        # Pixel array (store 1-sigma) 
+        excess_pxl[i] = (
+            x,
+            y,
+            float(obj["a"]),
+            float(obj["b"]),
+            theta_deg
+        )
+
+        if shape == "circle":
+            r_deg = (a3 / 3600.0)
+            excess[i] = (ra, dec, r_deg)
+        else:
+            a_deg = a3 / 3600.0
+            b_deg = b3 / 3600.0
+            excess[i] = (ra, dec, a_deg, b_deg, theta_deg)
+
+    return excess, excess_pxl
+
+
+###############################################################################
+# The helper functions (unchanged)
+###############################################################################
+
+def Make_Circle(RA, DEC, R, sky_frame="fk5", ra_unit=u.deg,
+                dec_unit=u.deg, size_unit=u.arcsec):
+    """Generate a list of CircleSkyRegion objects in RA/Dec."""
+    RA = np.atleast_1d(RA)
+    DEC = np.atleast_1d(DEC)
+    R = np.atleast_1d(R)
+
+    n = max(len(RA), len(DEC), len(R))
+
+    def broadcast(arr):
+        if len(arr) == 1:
+            return np.repeat(arr, n)
+        return arr
+
+    RA = broadcast(RA)
+    DEC = broadcast(DEC)
+    R = broadcast(R)
+
+    if not isinstance(RA[0], u.Quantity):
+        RA = RA * ra_unit
+    if not isinstance(DEC[0], u.Quantity):
+        DEC = DEC * dec_unit
+    if not isinstance(R[0], u.Quantity):
+        R = R * size_unit
+
+    regions = []
+    for ra, dec, r in zip(RA, DEC, R):
+        center = SkyCoord(ra, dec, frame=sky_frame)
+        circle = CircleSkyRegion(center=center, radius=2 * r)
+        regions.append(circle)
+
+    return regions
+
+
+def circle_intersects_circle(c1, r1, c2, r2):
+    """Kyles's circle intersection check."""
+    return c1.separation(c2) < (r1 + r2)
+
+
+###############################################################################
+# MODIFIED find_valid_background — collects N candidates
+###############################################################################
+
+def find_valid_background_candidates(excess, target_center,
+                                     target_radius=10*u.arcsec,
+                                     bck_radius=8*u.arcsec,
+                                     step_size=1*u.arcsec,
+                                     dist_limit=200*u.arcsec,
+                                     max_iter=None,
+                                     n_candidates=10,
+                                     verbose=True):
+    """
+    Kyles's find_valid_background adapted to collect multiple candidates
+    instead of returning at the first valid position.
+
+    All search logic is identical to Kyles's version, radial spiral
+    search using position angles from detected excess sources. The only
+    change is collecting up to n_candidates instead of stopping at 1.
+
+    The Parameters are:
+    excess : structured array, Detected sources with (RA, DEC, R) columns in degrees.
+    target_center : SkyCoord or array-like, Target sky coordinates.
+    target_radius : Quantity, Radius of the target source region.
+    bck_radius : Quantity, Radius of the background circle to place.
+    step_size : Quantity, Radial increment for searching outward.
+    dist_limit : Quantity, Maximum search distance from target.
+    max_iter : int or None, Maximum number of theta steps.
+    n_candidates : int, Number of candidate positions to collect.
+    verbose : bool, Print progress information.
+
+    Should Return:
+    list of dict, Each dict has 'ra', 'dec', 'distance_arcsec', 'angle_deg'.
+    """
+
+    # Kyles's coordinate setup (unchanged)
+    if isinstance(target_center, SkyCoord):
+        c0 = target_center
+        target_center_qty = np.array((c0.ra.deg, c0.dec.deg)) * u.deg
+    else:
+        if not isinstance(target_center[0], u.Quantity):
+            target_center_qty = np.array(target_center) * u.deg
+        else:
+            target_center_qty = target_center
+        c0 = SkyCoord(target_center_qty[0], target_center_qty[1], frame="fk5")
+
+    if not isinstance(target_radius, u.Quantity):
+        target_radius = np.array(target_radius) * u.arcsec
+    if not isinstance(dist_limit, u.Quantity):
+        dist_limit = np.array(dist_limit) * u.arcsec
+    if not isinstance(bck_radius, u.Quantity):
+        bck_radius = np.array(bck_radius) * u.arcsec
+    if not isinstance(step_size, u.Quantity):
+        step_size = np.array(step_size) * u.arcsec
+
+    # Kyles's distance/angle arrays (unchanged) 
+    n_steps = int(((dist_limit - (target_radius + bck_radius)) / step_size).decompose())
+    dist_arr = np.linspace(
+        (target_radius + bck_radius).to(u.arcsec),
+        dist_limit,
+        n_steps
+    )
+
+    np.random.shuffle(excess)
+
+    ex_center = SkyCoord(excess["RA"], excess["DEC"], unit=u.deg, frame="fk5")
+    sep_arr = c0.separation(ex_center).to(u.arcsec)
+    angl_arr = c0.position_angle(ex_center).degree
+    n_excess = len(sep_arr)
+    if max_iter is None or max_iter > n_excess:
+        max_iter = n_excess
+
+    if n_excess < 5:
+        angl_arr = np.linspace(0, 360, 20) * u.deg
+    if n_excess < 3:
+        sep_arr = np.linspace(
+            (target_radius + bck_radius).to(u.arcsec),
+            dist_limit / 2,
+            len(sep_arr)
+        ) * u.arcsec
+
+    angl_arr = angl_arr[:int(max_iter)]
+
+    # Kyles's circle intersection search (modified to collect N)
+    cols = excess.dtype.names
+    if "R" not in cols:
+        if verbose:
+            print("  WARNING: excess array doesn't have 'R' column. "
+                  "Only circle shapes are supported in this version.")
+        return []
+
+    candidates = []
+
+    if verbose:
+        print(f"  Checking {len(dist_arr)*len(angl_arr)} permutations "
+              f"against {n_excess} excess sources.")
+
+    for i, dist in enumerate(dist_arr):
+        if len(candidates) >= n_candidates:
+            break
+
+        for j, angl in enumerate(angl_arr):
+            if len(candidates) >= n_candidates:
+                break
+
+            candidate = c0.directional_offset_by(angl, dist)
+            intersects = False
+
+            # Kyles's proximity check
+            if n_excess > 4:
+                c_sep = sep_arr[j]
+                if c_sep > candidate.separation(c0):
+                    intersects = True
+
+            # Kyles's circle intersection check
+            if not intersects:
+                if circle_intersects_circle(
+                    candidate, bck_radius,
+                    ex_center, excess["R"] * u.degree
+                ).any():
+                    intersects = True
+
+            if not intersects:
+                ra = float(candidate.ra.deg)
+                dec = float(candidate.dec.deg)
+
+                candidates.append({
+                    'ra': ra,
+                    'dec': dec,
+                    'distance_arcsec': float(dist.to(u.arcsec).value),
+                    'angle_deg': float(angl if isinstance(angl, float)
+                                       else angl.to(u.deg).value
+                                       if isinstance(angl, u.Quantity)
+                                       else float(angl)),
+                })
+
+                if verbose:
+                    print(f"  Candidate #{len(candidates)}: "
+                          f"RA={ra:.6f}, Dec={dec:.6f}, "
+                          f"dist={dist.to(u.arcsec).value:.1f}\", "
+                          f"angle={candidates[-1]['angle_deg']:.0f}°")
+
+    return candidates
+
+
+###############################################################################
+# FOV CHECK USING EXPOSURE MAP
+###############################################################################
+
+def check_region_in_fov(image_path, exp_path, region_ra, region_dec, region_radius_arcsec):
+    """
+    Check whether a circular region falls entirely within the exposed
+    area of a UVOT image by checking the exposure map.
+
+    Pixels with zero exposure are outside the detector FOV (the black
+    areas caused by the detector being rotated within the square image).
+
+    Returns True if ALL pixels under the circle have non-zero exposure.
+    """
+    try:
+        # Get WCS from the image
+        with fits.open(image_path) as hdul:
+            for hdu in hdul:
+                if hdu.header.get('NAXIS', 0) >= 2:
+                    w = WCS(hdu.header)
+                    cdelt1 = hdu.header.get('CDELT1', None)
+                    plate_scale = abs(cdelt1) * 3600 if cdelt1 else 0.502
+                    break
+            else:
+                return False
+
+        # Get exposure map data
+        with fits.open(exp_path) as hdul:
+            for hdu in hdul:
+                if hdu.header.get('NAXIS', 0) >= 2:
+                    exp_data = hdu.data
+                    ny, nx = exp_data.shape
+                    break
+            else:
+                return False
+
+        # Convert region center to pixel coords
+        cx, cy = w.all_world2pix(region_ra, region_dec, 0)
+        cx = float(cx)
+        cy = float(cy)
+
+        # Convert radius to pixels
+        r_pix = region_radius_arcsec / plate_scale
+
+        # Bounding box
+        x_min = max(0, int(cx - r_pix) - 1)
+        x_max = min(nx - 1, int(cx + r_pix) + 1)
+        y_min = max(0, int(cy - r_pix) - 1)
+        y_max = min(ny - 1, int(cy + r_pix) + 1)
+
+        if x_min >= nx or x_max < 0 or y_min >= ny or y_max < 0:
+            return False
+
+        # Check each pixel in the circle
+        for y in range(y_min, y_max + 1):
+            for x in range(x_min, x_max + 1):
+                dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+                if dist <= r_pix:
+                    if exp_data[y, x] <= 0:
+                        return False
+
+        return True
+
+    except Exception:
+        return False
+
+
+###############################################################################
+# GENERATE BEST BACKGROUND ACROSS ALL OBSERVATIONS
+###############################################################################
+
+def generate_best_background(base_path, save_path, target_ra, target_dec, bkg_radius=8.0, n_candidates=10, threshold=1.0, output_name="auto_bkg.reg"):
+    """
+    Generate the best background region that works across the most
+    observations.
+
+    Uses Kyles's find_sources for source detection and his
+    find_valid_background search logic for candidate generation,
+    then checks each candidate against all observation exposure maps.
+
+    The Parameters are:
+    base_path : str, Root data directory.
+    save_path : str, Directory for diagnostic CSV output.
+    target_ra, target_dec : float, Target coordinates in degrees.
+    bkg_radius : float, Background circle radius in arcseconds (default 8").
+    n_candidates : int, Number of candidate positions to evaluate.
+    threshold : float, Source detection threshold in sigma.
+    output_name : str, Region filename written into each observation directory.
+
+    Should Return:
+    dict or None, Best candidate with 'ra', 'dec', 'distance_arcsec',
+    'angle_deg', 'n_valid', or None if no valid candidate found.
+    """
+    QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"}
+    BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+
+    print("\n" + "=" * 70)
+    print("GENERATING BACKGROUND REGIONS")
+    print("=" * 70)
+    print(f"Target: RA={target_ra:.6f}, Dec={target_dec:.6f}")
+    print(f"Background radius: {bkg_radius}\"")
+    print(f"Candidates to evaluate: {n_candidates}")
+
+    ###################################################################
+    # First things first: Find a representative image for source detection.
+    # Prefer summed images (deeper, more sources detected).
+    ###################################################################
+    print("\n  Finding best-centered image for source detection...")
+
+    best_image = None
+    best_center_dist = float('inf')  # distance from target to frame center in pixels
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
+
+        for f in files:
+            # Check summed images and raw SK images
+            if not (f.endswith("_ex_summed.fits") or "_sk.img" in f):
+                continue
+
+            fpath = os.path.join(root, f)
+
+            try:
+                with fits.open(fpath) as hdul:
+                    for hdu in hdul:
+                        if hdu.header.get('NAXIS', 0) >= 2:
+                            w = WCS(hdu.header)
+                            nx = hdu.header['NAXIS1']
+                            ny = hdu.header['NAXIS2']
+
+                            # Where does the target fall in this image?
+                            tx, ty = w.all_world2pix(target_ra, target_dec, 0)
+
+                            # Distance from target to center of frame
+                            cx = nx / 2.0
+                            cy = ny / 2.0
+                            dist = ((float(tx) - cx) ** 2 + (float(ty) - cy) ** 2) ** 0.5
+
+                            # Also check the target is actually ON the frame
+                            if 0 < float(tx) < nx and 0 < float(ty) < ny:
+                                if dist < best_center_dist:
+                                    best_center_dist = dist
+                                    best_image = fpath
+                            break
+            except Exception:
+                continue
+
+    if best_image is None:
+        print("ERROR: No suitable image found for source detection.")
+        return None
+
+    print(f"Using: {os.path.basename(best_image)}")
+    print(f"From: {os.path.dirname(best_image)}")
+    print(f"Target is {best_center_dist:.0f} pixels from frame center")
+
+    ###################################################################
+    # STEP 2: Detect sources using find_sources
+    ###################################################################
+    print(f"\n  Detecting sources (threshold={threshold} sigma)...")
+
+    try:
+        excess, excess_pxl = find_sources(
+            best_image, threshold=threshold,
+            logscale=True, shape="circle"
+        )
+        print(f"Found {len(excess)} sources")
+    except Exception as e:
+        print(f"Source detection failed: {e}")
+        print(f"Creating empty source list")
+        excess = np.zeros(0, dtype=np.dtype([("RA", "f8"), ("DEC", "f8"), ("R", "f8")]))
+
+    ###################################################################
+    # STEP 3: Find candidate background positions using spiral search logic
+    ###################################################################
+    print(f"\n  Searching for {n_candidates} candidate background positions...")
+
+    target_center = SkyCoord(target_ra, target_dec, unit='deg', frame='fk5')
+
+    if len(excess) > 0:
+        candidates = find_valid_background_candidates(
+            excess, target_center,
+            target_radius=10 * u.arcsec,
+            bck_radius=bkg_radius * u.arcsec,
+            step_size=1 * u.arcsec,
+            dist_limit=200 * u.arcsec,
+            n_candidates=n_candidates,
+            verbose=True,
+        )
+    else:
+        # No sources detected, generate geometric candidates
+        print("No sources detected, generating geometric candidates...")
+        candidates = []
+        angles = np.linspace(0, 360, n_candidates, endpoint=False)
+        for angle in angles:
+            cand = target_center.directional_offset_by(
+                angle * u.deg, 30 * u.arcsec
+            )
+            candidates.append({
+                'ra': float(cand.ra.deg),
+                'dec': float(cand.dec.deg),
+                'distance_arcsec': 30.0,
+                'angle_deg': float(angle),
+            })
+
+    if not candidates:
+        print("ERROR: No valid background candidates found.")
+        return None
+
+    print(f"\n  Found {len(candidates)} candidates")
+
+    ###################################################################
+    # STEP 4: Collect all observation image/exposure map pairs
+    ###################################################################
+    print(f"\n  Collecting observation files for FOV checking...")
+
+    obs_files = []
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
+
+        obsid_match = re.search(r"(\d{11})", root)
+        obsid = obsid_match.group(1) if obsid_match else "?"
+        current_files = os.listdir(root)
+
+        for band in BANDS:
+            # Find the image uvotsource will use
+            summed_file = f"{band}_ex_summed.fits"
+            sk_img = f"sw{obsid}{band}_sk.img"
+            sk_gz = f"sw{obsid}{band}_sk.img.gz"
+
+            image_file = None
+            if summed_file in current_files:
+                image_file = summed_file
+            elif sk_img in current_files:
+                image_file = sk_img
+            elif sk_gz in current_files:
+                image_file = sk_gz
+            else:
+                continue
+
+            image_path = os.path.join(root, image_file)
+
+            # Find the matching exposure map
+            exp_summed = f"{band}_expmap_summed.fits"
+            exp_img = f"sw{obsid}{band}_ex.img"
+            exp_gz = f"sw{obsid}{band}_ex.img.gz"
+
+            exp_file = None
+            if image_file == summed_file:
+                if exp_summed in current_files:
+                    exp_file = exp_summed
+            else:
+                if exp_img in current_files:
+                    exp_file = exp_img
+                elif exp_gz in current_files:
+                    exp_file = exp_gz
+
+            if exp_file is None:
+                continue
+
+            exp_path = os.path.join(root, exp_file)
+            obs_files.append((obsid, band, image_path, exp_path))
+
+    print(f"  Found {len(obs_files)} observation/band combinations to check")
+
+    if not obs_files:
+        print("WARNING: No observation files with exposure maps found.")
+        print("Using closest candidate without FOV validation.")
+        best = candidates[0]
+        best['n_valid'] = 0
+        _write_background_regions(base_path, best, bkg_radius, output_name, QUARANTINE)
+        return best
+
+    ###################################################################
+    # STEP 5: Check each candidate against all observations
+    ###################################################################
+    print(f"\n  Checking {len(candidates)} candidates against "
+          f"{len(obs_files)} observations...")
+
+    results = []
+
+    for i, cand in enumerate(candidates):
+        valid_count = 0
+        per_obs_results = {}
+
+        for obsid, band, image_path, exp_path in obs_files:
+            key = f"{obsid}_{band}"
+            in_fov = check_region_in_fov(
+                image_path, exp_path,
+                cand['ra'], cand['dec'],
+                bkg_radius
+            )
+            per_obs_results[key] = in_fov
+            if in_fov:
+                valid_count += 1
+
+        pct = 100 * valid_count / len(obs_files)
+        print(f"    Candidate #{i+1}: {valid_count}/{len(obs_files)} "
+              f"observations valid ({pct:.0f}%)")
+
+        results.append({
+            'candidate': i + 1,
+            'ra': cand['ra'],
+            'dec': cand['dec'],
+            'distance': cand['distance_arcsec'],
+            'angle': cand['angle_deg'],
+            'n_valid': valid_count,
+            'n_checked': len(obs_files),
+            'per_obs': per_obs_results,
+        })
+
+    ###################################################################
+    # STEP 6: Save diagnostic CSV
+    ###################################################################
+    print(f"\n  Saving diagnostic CSV...")
+
+    obs_keys = sorted(set(f"{o}_{b}" for o, b, _, _ in obs_files))
+
+    csv_rows = []
+    for r in results:
+        row = {
+            'Candidate': r['candidate'],
+            'RA': r['ra'],
+            'Dec': r['dec'],
+            'Distance_arcsec': r['distance'],
+            'Angle_deg': r['angle'],
+            'N_Valid': r['n_valid'],
+            'N_Checked': r['n_checked'],
+            'Valid_Pct': 100 * r['n_valid'] / r['n_checked']
+                         if r['n_checked'] > 0 else 0,
+        }
+        for key in obs_keys:
+            row[key] = r['per_obs'].get(key, False)
+        csv_rows.append(row)
+
+    csv_df = pd.DataFrame(csv_rows)
+    csv_path = os.path.join(save_path, "background_candidate_check.csv")
+    csv_df.to_csv(csv_path, index=False)
+    print(f"Saved: {csv_path}")
+
+    ###################################################################
+    # STEP 7: Pick the best candidate Most valid observations first, then closest to source
+    ###################################################################
+    results.sort(key=lambda r: (-r['n_valid'], r['distance']))
+
+    best = results[0]
+
+    print(f"\n  BEST CANDIDATE: #{best['candidate']}")
+    print(f"RA={best['ra']:.6f}, Dec={best['dec']:.6f}")
+    print(f"Distance from source: {best['distance']:.1f}\"")
+    print(f"Angle: {best['angle']:.0f}°")
+    print(f"Valid for {best['n_valid']}/{best['n_checked']} observations "
+          f"({100*best['n_valid']/best['n_checked']:.0f}%)")
+
+    if best['n_valid'] < best['n_checked']:
+        print(f"\n  WARNING: Background does not work for all observations.")
+        print(f"{best['n_checked'] - best['n_valid']} observations will have "
+              f"the background outside the FOV.")
+
+    ###################################################################
+    # STEP 8: Write background region to all observation directories
+    ###################################################################
+    best_cand = {
+        'ra': best['ra'],
+        'dec': best['dec'],
+        'distance_arcsec': best['distance'],
+        'angle_deg': best['angle'],
+        'n_valid': best['n_valid'],
+    }
+
+    n_written = _write_background_regions(
+        base_path, best_cand, bkg_radius, output_name, QUARANTINE
+    )
+    print(f"\n  Wrote {n_written} background region files ({output_name})")
+
+    return best_cand
+
+
+def _write_background_regions(base_path, candidate, bkg_radius, output_name,
+                              quarantine_folders):
+    """Write background region file into every uvot/image directory."""
+    count = 0
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in quarantine_folders):
+            continue
+
+        reg_path = os.path.join(root, output_name)
+        reg_text = (
+            f'# Region file format: DS9 version 4.1\n'
+            f'# Auto-generated background region\n'
+            f'fk5\n'
+            f'circle({candidate["ra"]},{candidate["dec"]},{bkg_radius}")\n'
+        )
+        with open(reg_path, 'w') as f:
+            f.write(reg_text)
+        count += 1
+
+    return count
+
+
 import time
 import gc
 
 
-def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, num_stars=50):
+def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=None, num_stars=None, manual_mode=False):
     """
     Automated aspect correction using the observations table.
 
@@ -2648,13 +3696,30 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
        You Thomas(proably) will also notice bellow I have tons of comments, 
        Both for bookkeeping reasons (mostly debuging, trying to keep track of the mess I was making) and also
        So you can track exactly in detail what has been changed, and why, I think the why is important on occasion.
+
+       ADDED: MANUAL MODE
+       Uses the provided side_buffer and num_stars for attempt 1, then
+       prompts the user between attempts to adjust parameters
     """
 
     
     ###############################################################################
     # RETRY STATE VARIABLES
+    # Determine the retry sequence based on mode
+    if manual_mode:
+        # Manual mode: use provided params, then prompt between attempts
+        if side_buffer is None:
+            side_buffer = ASPECT_RETRY_LADDER[0][0]
+        if num_stars is None:
+            num_stars = ASPECT_RETRY_LADDER[0][1]
+        retry_sequence = [(side_buffer, num_stars)]  # Will extend via prompts
+    else:
+        # Automatic mode: use the full ladder
+        retry_sequence = list(ASPECT_RETRY_LADDER)
+    
     failed_frames_to_retry = None
     attempt_num = 0
+
 
     ##############################################################################
     # MAIN RETRY LOOP
@@ -2666,14 +3731,18 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
     #   around the aspect correction step itself, since all the upstream
     #   work (detection, smear removal, etc.) has already been done and
     #   stored in obs_table.
-    while True:
+
+    for attempt_params in retry_sequence:
+        current_side_buffer, current_num_stars = attempt_params
+        
         print("\n" + "=" * 70)
         if attempt_num == 0:
             print("AUTOMATED ASPECT CORRECTION - INITIAL ATTEMPT")
         else:
             print(f"AUTOMATED ASPECT CORRECTION - RETRY ATTEMPT {attempt_num}")
         print("=" * 70)
-        print(f"Parameters: side_buffer={side_buffer}, num_stars={num_stars}")
+        print(f"Parameters: side_buffer={current_side_buffer}, "
+              f"num_stars={current_num_stars}")
         print(f"HEASOFT Backend: {HEASOFT_BACKEND}")
 
         ##############################################################################
@@ -3018,14 +4087,14 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
                         #   We now find stars fresh for each correction pair, avoiding that.
                         ref_bright_stars = find_brightest_central_stars(
                             ref_detect_file,
-                            num_stars=num_stars,
-                            side_buffer=side_buffer
+                            num_stars=current_num_stars,
+                            side_buffer=current_side_buffer
                         )
 
                         obs_bright_stars = find_brightest_central_stars(
                             obs_detect_file,
-                            num_stars=num_stars,
-                            side_buffer=side_buffer
+                            num_stars=current_num_stars,
+                            side_buffer=current_side_buffer
                         )
 
                         # Cross-match stars between the reference and observation.
@@ -3063,14 +4132,12 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
                         if ref_full_path.endswith('.gz'):
                             ref_img_path = ref_full_path[:-3]
                             if not os.path.exists(ref_img_path):
-                                print(f" Unzipping reference image...")
                                 if HEASOFT_BACKEND == "wsl":
                                     wsl_path = prepare_path(ref_full_path)
-                                    gunzip_cmd = f"gunzip -k '{wsl_path}'"
-                                    run_heasoft_command(gunzip_cmd) # I saw Heasoft had A way to do this And I trust it more then windows.
+                                    run_heasoft_command(f"gunzip -k '{wsl_path}'")
                                 else:
-                                    os.system(f'gunzip -k "{ref_full_path}"') # Input you best MACOS version here, or this might work.
-                                ref_img_name = os.path.basename(ref_img_path)
+                                    run_heasoft_command(f"gunzip -k '{ref_full_path}'")
+                            ref_img_name = os.path.basename(ref_img_path)
                         else:
                             ref_img_path = ref_full_path
 
@@ -3126,18 +4193,15 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
                         if obs_img_path.endswith('.gz'):
                             obs_img_unzipped = obs_img_path[:-3]
                             if not os.path.exists(obs_img_unzipped):
-                                print(f"    Unzipping observation image...")
                                 if HEASOFT_BACKEND == "wsl":
                                     wsl_path = prepare_path(obs_img_path)
-                                    gunzip_cmd = f"gunzip -k '{wsl_path}'"
-                                    run_heasoft_command(gunzip_cmd)
+                                    run_heasoft_command(f"gunzip -k '{wsl_path}'")
                                 else:
-                                    os.system(f'gunzip -k "{obs_img_path}"') # Input you best MACOS version here, or this might work.
+                                    run_heasoft_command(f"gunzip -k '{obs_img_path}'")
                             obs_img_path = obs_img_unzipped
-                            obs_file_found = os.path.basename(obs_img_unzipped)
 
                         if not os.path.exists(obs_img_path):
-                            print(f" ❌ Failed to unzip observation image")
+                            print(" ❌ Failed to unzip obs image")
                             corrections_failed += 1
                             continue
 
@@ -3149,34 +4213,21 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
                         #           ref_frame, obs_frame, obspath=obs_directory)
                         #   Which assumed native HEASOFT. I use a WSL So that is a no-no
                         #   when running through WSL.
-                        if HEASOFT_BACKEND == "wsl":
-                            unicorr_command = create_uvotunicorr_full_command_wsl(
-                                ref_frame=ref_obsid,
-                                obs_frame=obs_obsid,
-                                band=band,
-                                ref_snapshot=ref_snapshot,
-                                obs_snapshot=obs_snapshot,
-                                obspath=obs_dir
-                            )
+                        # Native and WSL both use the same command builder
+                        unicorr_command = create_uvotunicorr_command(
+                            ref_frame=ref_obsid,
+                            obs_frame=obs_obsid,
+                            band=band,
+                            ref_snapshot=ref_snapshot,
+                            obs_snapshot=obs_snapshot,
+                            obspath=obs_dir
+                        )
 
-                            print(f" Running uvotunicorr (WSL)...")
-
-                            # Force Python to release any open file handles
-                            # before calling WSL, which runs in a separate filesystem namespace
-                            gc.collect()
-
-                            corrections_attempted += 1
-                            run_heasoft_command(unicorr_command)
-                            
-                            # Wait for WSL process to finish writing to disk
-                            time.sleep(5)
-
-                        else:
-                            # Native macOS/Linux HEASOFT
-                            #  not yet A thing in this, you gotta do that Thomas, This is all you.
-                            print(f" Error Thomas: ⚠️  macOS support not yet implemented - skipping")
-                            corrections_failed += 1
-                            continue
+                        print(f" Running uvotunicorr...")
+                        gc.collect()
+                        corrections_attempted += 1
+                        run_heasoft_command(unicorr_command)
+                        time.sleep(5)
 
                             
                         # Check to see if it worked
@@ -3259,6 +4310,7 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
         # Attempt to retry 
 
         total_remaining = sum(aspectnone_dict.values())
+        
         print("\n" + "=" * 70)
         if attempt_num == 0:
             print("INITIAL ATTEMPT COMPLETE")
@@ -3281,35 +4333,39 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
         #   EVERYTHING (download, detect, smear, unzip, correct). We only
         #   re-run the correction step on the specific failed frames.
         
-        print(f"\n⚠️ {total_remaining} frames failed.")
-        print("\nFailed frames by group:")
-        for key, count in aspectnone_dict.items():
-            print(f" {key}: {count} frames")
-
-        retry = input("\nDo you want to retry failed frames with different parameters? (yes/no): ").strip().lower()
-
-        if retry not in ['yes', 'y']:
-            print("Stopping correction process.")
-            break
-
-        # Get new parameters from the user
-        try:
-            new_side_buffer = input(f"Enter new side_buffer value (current: {side_buffer}, press Enter to keep): ").strip()
-            if new_side_buffer:
-                side_buffer = int(new_side_buffer) # Again I really need to go all the way back if this changes. I should proably get rid of this.
-
-            new_num_stars = input(f"Enter new num_stars value (current: {num_stars}, press Enter to keep): ").strip()
-            if new_num_stars:
-                num_stars = int(new_num_stars)
-
-            print(f"\nRetrying with side_buffer={side_buffer}, num_stars={num_stars}")
-
-        except ValueError:
-            print("Invalid input - keeping current parameters")
-
-        # Store failed frames for the next attempt and increment
+        # Prepare for next attempt
         failed_frames_to_retry = aspectnone_tiles_dict.copy()
         attempt_num += 1
+        
+        # Manual mode: prompt user to decide next step
+        if manual_mode:
+            print(f"\n {total_remaining} frames failed.")
+            print("\nFailed frames by group:")
+            for key, count in aspectnone_dict.items():
+                print(f" {key}: {count} frames")
+            
+            retry = input("\nRetry with different parameters? (yes/no): ").strip().lower()
+            if retry not in ['yes', 'y']:
+                print("Stopping correction process.")
+                break
+            
+            try:
+                new_sb = input(f"New side_buffer (current: {current_side_buffer}, Enter to keep): ").strip()
+                new_ns = input(f"New num_stars (current: {current_num_stars}, Enter to keep): ").strip()
+                new_sb = int(new_sb) if new_sb else current_side_buffer
+                new_ns = int(new_ns) if new_ns else current_num_stars
+                retry_sequence.append((new_sb, new_ns))
+            except ValueError:
+                print("Invalid input — stopping.")
+                break
+        else:
+            # Automatic mode: just continue to next params in ladder
+            if attempt_num < len(retry_sequence):
+                print(f"\n⚠ {total_remaining} frames failed at "
+                      f"({current_side_buffer}\", {current_num_stars} stars).")
+                print(f"Advancing to next attempt with "
+                      f"({retry_sequence[attempt_num][0]}\", "
+                      f"{retry_sequence[attempt_num][1]} stars)...")
 
     #######################################################################################
     # The End
@@ -3318,10 +4374,516 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=7, 
     print("=" * 70)
     final_remaining = sum(aspectnone_dict.values()) if aspectnone_dict else 0
     print(f"Total frames still needing correction: {final_remaining}")
-
+    print(f"Attempts made: {attempt_num + 1}")
+    
     if final_remaining > 0:
+        print(f"\nFailed frames will be moved to NotASPCORR/ by Step 3.5")
         print("\nFailed frames by group:")
         for key, count in aspectnone_dict.items():
             print(f"  {key}: {count} frames")
-
+    
     return aspectnone_dict, aspectnone_tiles_dict
+
+
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import subprocess
+import sys
+import platform
+
+import math
+import pandas as pd
+import numpy as np
+import re
+
+import shutil
+#import uvot_pipeline as up
+import argparse
+import warnings
+import requests
+
+from tqdm import tqdm
+#from sh import gunzip
+
+import astropy.units as u
+from astropy.io import fits
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
+from astropy.wcs import WCS
+from astropy.table import QTable, Table
+
+from swifttools.swift_too import Clock,TOO, Resolve, ObsQuery, Data
+
+import tkinter as tk
+from tkinter import filedialog
+
+
+# Ensure pfiles directory exists
+os.makedirs("/tmp/pfiles", exist_ok=True)
+
+
+try:
+    get_ipython()
+    IN_NOTEBOOK = True
+except NameError:
+    IN_NOTEBOOK = False
+
+
+
+# Parse args differently based on environment
+if IN_NOTEBOOK:
+    # In Jupyter, ignore sys.argv and use defaults
+    class NotebookArgs:
+        source_name = None
+        source_ra = None
+        source_dec = None
+        verbose = False
+        use_wsl = True  # Set to True if on Windows to skip autodetection.
+        make_plots = False
+    
+    args = NotebookArgs()
+else:
+    # Command line - parse normally
+    args = parser.parse_args()
+
+
+
+
+class DownloadError(Exception):
+    """Raise when requests status quo does not return 200."""
+    pass
+
+
+#insert download products code here
+
+def setup_data_directories():
+    """
+    setup for data and save directories/also downloads said areas if asked, gives
+    (data_directory, save_directory) or (None, None) if user cancels
+    """
+    global DATA_DIRECTORY, SAVE_DIRECTORY
+
+    print("\n" + "=" * 70)
+    print("SWIFT UVOT DATA SETUP")
+    print("=" * 70)
+
+    # Ask if they have existing data
+    print("\nDo you have SWIFT data already downloaded?")
+    print("  1. Yes - I have existing data")
+    print("  2. No - I need to download new data")
+
+    while True:
+        choice = input("\nEnter your choice (1 or 2): ").strip()
+        if choice in ['1', '2']:
+            break
+        print("Invalid choice. Please enter 1 or 2.")
+
+    # Initialize Tkinter for file dialogs
+    root = tk.Tk()
+    root.withdraw()
+
+    data_directory = None
+    save_directory = None
+
+    if choice == '1':
+        #######################################################################
+        # OPTION 1: Use existing data
+        #######################################################################
+        print("\n" + "-" * 70)
+        print("SELECT EXISTING DATA DIRECTORY")
+        print("-" * 70)
+        print("Please select the folder containing your data.")
+
+        data_directory = filedialog.askdirectory(
+            title="Select Existing SWIFT Data Directory"
+        )
+
+        if not data_directory:
+            print("No directory selected. Aborting.")
+            return None
+
+        print(f"Data Directory: {data_directory}")
+
+        # Ask for save directory
+        print("\n" + "-" * 70)
+        print("SELECT SAVE DIRECTORY FOR RESULTS")
+        print("-" * 70)
+        print("Please select where you want to save analysis results...")
+
+        save_directory = filedialog.askdirectory(
+            title="Select Save Directory for Results"
+        )
+
+        if not save_directory:
+            print("No save directory selected. Using data directory as default.")
+            save_directory = data_directory
+
+        print(f"Save Directory: {save_directory}")
+
+    else:
+        #######################################################################
+        # OPTION 2: Download new data
+        #######################################################################
+        print("\n" + "-" * 70)
+        print("DOWNLOAD NEW SWIFT DATA")
+        print("-" * 70)
+        print("\nEnter the coordinates and search radius:")
+
+        while True:
+            try:
+                ra = float(input("Right Ascension (decimal degrees): ").strip())
+                break
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+        while True:
+            try:
+                dec = float(input("Declination (decimal degrees): ").strip())
+                break
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+        while True:
+            try:
+                radius = float(input("Search radius (degrees): ").strip())
+                break
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+        # Query the database
+        print(f"\nSearching for observations at RA={ra}, Dec={dec}, "
+              f"Radius={radius}°...")
+        query = ObsQuery(ra=str(ra), dec=str(dec), radius=radius)
+
+        total_obs = len(query)
+
+        if total_obs == 0:
+            print("No observations found with these parameters.")
+            return None
+
+        print(f"\n{'=' * 70}")
+        print(f"FOUND {total_obs} OBSERVATION(S)")
+        print(f"{'=' * 70}")
+
+        preview_count = min(10, total_obs)
+        print(f"\nPreview of first {preview_count} observation(s):")
+        for i, q in enumerate(list(query)[:preview_count], start=1):
+            print(f"  {i}. ObsID: {q.obsid} | Date: {q.begin}")
+
+        if total_obs > preview_count:
+            print(f"  ... and {total_obs - preview_count} more")
+
+        print(f"\nThis will download {total_obs} observation(s) with UVOT data.")
+        confirm = input("Do you want to proceed with the download? (yes/no): ").strip().lower()
+
+        if confirm not in ['yes', 'y']:
+            print("Download cancelled.")
+            return None
+
+        # Select download directory
+        print("\n" + "-" * 70)
+        print("SELECT DOWNLOAD DIRECTORY")
+        print("-" * 70)
+        print("Please select where you want to download the SWIFT data...")
+
+        data_directory = filedialog.askdirectory(
+            title="Select Download Directory"
+        )
+
+        if not data_directory:
+            print("No directory selected. Aborting.")
+            return None
+
+        print(f"Data will be downloaded to: {data_directory}")
+
+        # Select save directory
+        print("\n" + "-" * 70)
+        print("SELECT SAVE DIRECTORY FOR RESULTS")
+        print("-" * 70)
+        print("Please select where you want to save analysis results...")
+
+        save_directory = filedialog.askdirectory(
+            title="Select Save Directory for Results"
+        )
+
+        if not save_directory:
+            print("No save directory selected. Using download directory as default.")
+            save_directory = data_directory
+
+        print(f"Save Directory: {save_directory}")
+
+        os.makedirs(data_directory, exist_ok=True)
+
+        # Download the data
+        print(f"\n{'=' * 70}")
+        print("DOWNLOADING DATA")
+        print(f"{'=' * 70}")
+
+        for i, q in enumerate(query, start=1):
+            start_time_str = str(q.begin).replace(":", "-").replace(" ", "_")
+            obs_dir = os.path.join(data_directory, f"{q.obsid}_{start_time_str}")
+            os.makedirs(obs_dir, exist_ok=True)
+
+            if os.listdir(obs_dir):
+                print(f"[{i}/{total_obs}] ObsID {q.obsid} already exists, skipping...")
+                continue
+
+            print(f"[{i}/{total_obs}] Downloading ObsID {q.obsid} "
+                  f"(Date: {q.begin})...")
+            try:
+                Data(obsid=q.obsid, uvot=True, clobber=True, outdir=obs_dir)
+                print(f"Successfully downloaded to {obs_dir}")
+            except Exception as e:
+                print(f"Failed to download: {e}")
+
+        print(f"\n{'=' * 70}")
+        print("DOWNLOAD COMPLETE")
+        print(f"{'=' * 70}")
+        print(f"Total observations downloaded: {total_obs}")
+        print(f"Data location: {data_directory}")
+
+    #######################################################################
+    # Collect target coordinates upfront so the pipeline can run
+    # unattended without prompting again later.
+    #######################################################################
+    print("\n" + "-" * 70)
+    print("TARGET COORDINATES")
+    print("-" * 70)
+    print("Enter the target source coordinates (decimal degrees).")
+    print("These will be used for source and background region generation.\n")
+
+    while True:
+        try:
+            target_ra = float(input("Target RA (decimal degrees): ").strip())
+            break
+        except ValueError:
+            print("  Invalid — please enter a number.")
+
+    while True:
+        try:
+            target_dec = float(input("Target Dec (decimal degrees): ").strip())
+            break
+        except ValueError:
+            print("  Invalid — please enter a number.")
+
+    print(f"\nTarget: RA={target_ra:.6f}, Dec={target_dec:.6f}")
+
+    #######################################################################
+    # Save to globals and return dict
+    #######################################################################
+    DATA_DIRECTORY = data_directory
+    SAVE_DIRECTORY = save_directory
+
+    return {
+        'data_directory': data_directory,
+        'save_directory': save_directory,
+        'target_ra': target_ra,
+        'target_dec': target_dec,
+    }
+
+
+
+
+
+
+
+
+    #insert subfolder idenfitication code here
+
+
+#insert aspect correction parameter initialization here
+
+master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type', 'Group Num', 'Smeared Flag', 'SSS Flag', 'AspCorr Flag'])
+
+
+
+
+
+###########################################################################################################################################
+#Bellow is testing for clean_up_data cross compatiablity code 
+
+
+
+def clean_up_data(automation_mode=False, base_path=None, save_path=None):
+    """  
+        automation_mode : If True, skips GUI and print statements, returns data
+        base_path : Required if automation_mode=True
+        save_path : Required if automation_mode=True
+        
+        If automation_mode=True, then it will return:
+            - 'all_frames': DataFrame from IAC
+            - 'summary': Summary DataFrame from IAC  
+            - 'orphan_solutions': Dict of orphan solutions
+            - 'smeared_list': List of smeared observation folders
+            - 'observations_table': Detailed per-extension table
+    """
+
+# SETUP: Get paths from arguments, globals, or config file
+# If paths not provided, try to use global variables
+    if base_path is None:
+        if DATA_DIRECTORY is not None:
+            base_path = DATA_DIRECTORY
+            if not automation_mode:
+                print(f"Using global DATA_DIRECTORY: {base_path}")
+        else:
+            # Try loading from config file
+            config_data, config_save = load_paths_from_config()
+            if config_data:
+                base_path = config_data
+                if not automation_mode:
+                    print(f"Loaded DATA_DIRECTORY from config: {base_path}")
+    
+    if save_path is None:
+        if SAVE_DIRECTORY is not None:
+            save_path = SAVE_DIRECTORY
+            if not automation_mode:
+                print(f"Using global SAVE_DIRECTORY: {save_path}")
+        else:
+            # Try loading from config file
+            if base_path:  # Only if we found data path
+                config_data, config_save = load_paths_from_config()
+                if config_save:
+                    save_path = config_save
+                    if not automation_mode:
+                        print(f"Loaded SAVE_DIRECTORY from config: {save_path}")
+    
+    # check that we have the paths before it crashes.
+    if automation_mode:
+        if not base_path or not save_path:
+            raise ValueError(
+                "automation_mode needs base_path and save_path.\n"
+                "Either give them as arguments, set global variables, or run setup_data_directories() first."
+            )
+    else:
+        # If still no paths, inform user they need to run setup
+        if not base_path or not save_path:
+            print("\n" + "="*70)
+            print("NO DATA DIRECTORIES FOUND")
+            print("="*70)
+            print("You need to set up your data directories first.")
+            print("="*70)
+            return
+    
+    # Display configuration
+    if not automation_mode:
+        print(f"{'='*70}")
+        print(f"Data Directory: {base_path}")
+        print(f"Save Directory: {save_path}")
+        print(f"{'='*70}")
+        
+    
+    # Initialize results dictionary for automation mode
+    results = {
+        'all_frames': None,
+        'summary': None,
+        'orphan_solutions': None,
+        'smeared_list': None,
+        'observations_table': None
+    }
+    
+    # 1. RUN UVOT DETECT
+    if not automation_mode:
+        print("\n=== Running UVOT Detect ===")
+    try:
+        batch_run_uvotdetect(base_path)
+    except Exception as e:
+        print(f" UVOTDETECT failed: {e}")
+        if not automation_mode:
+            import traceback
+            traceback.print_exc()
+    
+    
+    # 2. DETECT SMEARED FRAMES
+    if not automation_mode:
+        print("\n=== Detecting Smeared Frames ===")
+    try:
+        smeared_list = detect_smeared_frames(base_path)
+        results['smeared_list'] = smeared_list
+        
+        if not automation_mode:
+            print(f" Found {len(smeared_list) if smeared_list else 0} smeared frames")
+    except Exception as e:
+        print(f" Smeared frame detection failed: {e}")
+        results['smeared_list'] = []
+    
+    # 3. RUN IAC
+    if not automation_mode:
+        print("\n=== Running IAC Swift Automation ===")
+        
+    all_frames, summary = swift_automation_mode(base_path=base_path, save_path=save_path)
+    results['all_frames'] = all_frames
+    results['summary'] = summary
+    
+    # ADDED: Save the summary CSV (swift_automation_mode doesn't do this)
+    if summary is not None:
+        summary_path = os.path.join(save_path, "workload_summary.csv")
+        summary.to_csv(summary_path, index=False)
+        if not automation_mode:
+            print(f"✅ Workload summary saved to: {summary_path}")
+    
+    if all_frames is None or summary is None:
+        if not automation_mode:
+            print("⚠️ IAC automation failed to generate data.")
+    else:
+        # 3.5. POPULATE OBSERVATIONS TABLE
+        if not automation_mode:
+            print("\n=== Populating Observations Table ===")
+        
+        try:
+            obs_table = populate_observations_table(base_path, all_frames, summary)
+            
+            # Update smeared flags
+            if results['smeared_list']:
+                obs_table = update_smeared_flags(obs_table, results['smeared_list'])
+            
+            results['observations_table'] = obs_table
+            
+            # Save table to CSV
+            table_path = os.path.join(save_path, "observations_table.csv")
+            obs_table.to_csv(table_path, index=False)
+            
+            if not automation_mode:
+                print(f" Observations table saved to: {table_path}")
+                print(f" Total entries: {len(obs_table)}")
+        
+        except Exception as e:
+            print(f" Failed to populate observations table: {e}")
+            import traceback
+            traceback.print_exc()
+        # 4. SOLVE ORPHAN FRAMES
+        if not automation_mode:
+            print("\n=== Solving Orphan Frames ===")
+        
+        # In automation mode, return the data instead of saving CSVs
+        orphan_solutions = solve_orphan_frames_by_group(
+            base_path=base_path, 
+            save_dir=save_path, 
+            return_data=automation_mode,  # Return data in automation mode
+            input_df=all_frames,
+            input_summary=summary
+        )
+        results['orphan_solutions'] = orphan_solutions
+    
+    # 5. REMOVE SMEARED FRAMES
+    if smeared_list:
+        if not automation_mode:
+            print("\n=== Removing Smeared Frames ===")
+        remove_smeared(base_path, smeared_list)
+    else:
+        if not automation_mode:
+            print("\n=== No Smeared Frames to Remove ===")
+    
+    if not automation_mode:
+        print("\n=== Clean Up Data Process Complete ===")
+        print(f"Results saved to: {save_path}")
+        return None
+    else:
+        # Return all data for downstream processing
+        return results
+
+######################################################################################################################################## End of Clean up
+
+
