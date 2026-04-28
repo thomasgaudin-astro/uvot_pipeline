@@ -38,22 +38,22 @@ from tkinter import filedialog
 # Backend: "wsl" (Windows) or "native" (Linux/macOS)
 HEASOFT_BACKEND = "native"   # set to "wsl" on Windows
 
-# ──────────────────────────────────────────────────────────────────────
+###############################################################################
 # WSL CONFIGURATION (only used if HEASOFT_BACKEND == "wsl")
-# ──────────────────────────────────────────────────────────────────────
+###############################################################################
 # The conda environment name that has HEASoft installed inside WSL.
 # If you installed HEASoft directly in WSL without conda, set to None
 # and use WSL_HEASOFT_INIT_SCRIPT below instead.
 WSL_CONDA_ENV = "henv"
 
-# Optional: explicit path INSIDE WSL to a HEASoft init script.
+# explicit path INSIDE WSL to a HEASoft init script.
 # Only used if WSL_CONDA_ENV is None. Example:
 #   "/home/user/heasoft/x86_64-pc-linux-gnu-libc2.31/headas-init.sh"
 WSL_HEASOFT_INIT_SCRIPT = None
 
-# ──────────────────────────────────────────────────────────────────────
+###############################################################################
 # NATIVE CONFIGURATION (only used if HEASOFT_BACKEND == "native")
-# ──────────────────────────────────────────────────────────────────────
+###############################################################################
 # The native backend auto-detects HEASoft and CALDB from environment
 # variables ($HEADAS, $CALDB).  Leave these as None to use whatever is
 # in the environment.  Only set them if you want to override or if your
