@@ -28,6 +28,8 @@ from requests.auth import HTTPBasicAuth
 import tkinter as tk
 from tkinter import filedialog
 
+import contextlib
+
 ###############################################################################
 # PLATFORM / HEASOFT CONFIGURATION
 #
@@ -36,7 +38,7 @@ from tkinter import filedialog
 ###############################################################################
 
 # Backend: "wsl" (Windows) or "native" (Linux/macOS)
-HEASOFT_BACKEND = "native"   # set to "wsl" on Windows
+HEASOFT_BACKEND = "wsl"   # set to "wsl" on Windows
 
 ###############################################################################
 # WSL CONFIGURATION (only used if HEASOFT_BACKEND == "wsl")
@@ -73,9 +75,223 @@ ASPECT_RETRY_LADDER = [
     (3, 15),   # Attempt 3: last resort
 ]
 
+###############################################################################
+# ORPHAN-RESCUE NEIGHBOR DISTANCE CAP
+# For an orphan to be rescued, its synthetic reference is built from
+# neighbor frames at similar sky pointings.  Neighbors more than
+# ORPHAN_MAX_NEIGHBOR_ARCMIN away from the orphan's pointing center
+# are rejected — they are observations of a different physical target
+# that just happen to be in the same sky region, and including them
+# would build a synthetic with wrong pointing.
+#
+# UVOT FOV is ~17 arcmin diameter; same-target observations typically
+# scatter within ~30" of each other.  Default cap of 3' allows generous
+# pointing scatter for the same target while rejecting cross-target
+# spillover.  Set to a large value (e.g. 30) to effectively disable
+# the cap and rely on uvotunicorr's intrinsic failure mode.
+###############################################################################
+ORPHAN_MAX_NEIGHBOR_ARCMIN = 30
+
+###############################################################################
+# ORPHAN-RESCUE SHIFT SCREENING
+# After uvotunicorr applies a correction during orphan rescue, compute
+# the angular shift between original and corrected CRVAL. If the shift
+# exceeds this threshold, treat the rescue as suspicious and revert.
+#
+# Typical uvotunicorr corrections are 1-10 arcsec (from the 12 I have tested). Shifts of 15"+ usually
+# indicate a wrong-target synthetic reference and produce wrong WCS.
+# Default: 15".
+###############################################################################
+ORPHAN_MAX_SHIFT_ARCSEC = 5
+
+
+#######################################################################
+# OUTPUT FORMAT TOGGLE
+#######################################################################
+# The pipeline always writes master_photometry.txt as its 
+# output (tab-separated, plain text, universal). Set WRITE_CSV_COPY
+# to True to also write a comma-separated .csv version for visual inspection
+WRITE_CSV_COPY = True
+
+##########################################################################################
+
 class DownloadError(Exception):
     """Raise when requests status quo does not return 200."""
     pass
+
+
+
+###############################################################################
+# BATCH MODE — LOAD TARGET LIST AND RUN PIPELINE PER TARGET
+###############################################################################
+
+DEFAULT_SEARCH_RADIUS = 0.05   # degrees, used if no Radius column in input
+
+# Accepted column names (case-insensitive) for each required field
+_BATCH_COL_ALIASES = {
+    'target': ['target', 'name', 'source', 'source_name', 'object'],
+    'ra':     ['ra', 'ra_deg', 'ra_obj', 'right_ascension'],
+    'dec':    ['dec', 'de', 'dec_deg', 'de_obj', 'declination'],
+    'radius': ['radius', 'search_radius', 'radius_deg', 'r'],
+}
+
+
+def _resolve_column(df, aliases):
+    """Find a column in df matching any name in aliases (case-insensitive)."""
+    lower_cols = {c.lower(): c for c in df.columns}
+    for alias in aliases:
+        if alias.lower() in lower_cols:
+            return lower_cols[alias.lower()]
+    return None
+
+
+def _sanitize_target_name(name):
+    """
+    Convert a target name into a safe folder/file name.
+    Replaces spaces with underscores, strips characters that break shells.
+    """
+    if not isinstance(name, str):
+        name = str(name)
+    name = name.strip().replace(' ', '_')
+    # Keep alphanumerics, underscore, dot, dash, plus
+    name = re.sub(r'[^A-Za-z0-9_.\-+]', '', name)
+    return name
+
+
+def load_batch_targets(filepath):
+    """
+    Load a batch target file (CSV or TXT) and return a normalised
+    DataFrame with columns: Target, RA, Dec, Radius.
+
+    Format is auto-detected from extension:
+      .csv -> comma-separated with header row
+      .txt -> tab-separated with header row
+
+    Required columns (case-insensitive, multiple aliases accepted):
+      Target / Name / Source / Source_Name / Object
+      RA / RA_deg / RA_obj / Right_Ascension
+      Dec / De / Dec_deg / De_obj / Declination
+
+    Optional column:
+      Radius / Search_Radius / Radius_deg / R   (degrees)
+
+    If no Radius column is provided, DEFAULT_SEARCH_RADIUS is used.
+    """
+    if not os.path.exists(filepath):
+        print(f"ERROR: Batch input file not found: {filepath}")
+        return None
+
+    ext = filepath.lower().rsplit('.', 1)[-1]
+    try:
+        if ext == 'csv':
+            df = pd.read_csv(filepath)
+        elif ext == 'txt':
+            df = pd.read_csv(filepath, sep='\t')
+        else:
+            # Try CSV first, fall back to whitespace
+            try:
+                df = pd.read_csv(filepath)
+            except Exception:
+                df = pd.read_csv(filepath, delim_whitespace=True)
+    except Exception as e:
+        print(f"ERROR: Could not parse batch input file: {e}")
+        return None
+
+    # Resolve column names
+    target_col = _resolve_column(df, _BATCH_COL_ALIASES['target'])
+    ra_col = _resolve_column(df, _BATCH_COL_ALIASES['ra'])
+    dec_col = _resolve_column(df, _BATCH_COL_ALIASES['dec'])
+    radius_col = _resolve_column(df, _BATCH_COL_ALIASES['radius'])
+
+    missing = []
+    if target_col is None:
+        missing.append("Target name")
+    if ra_col is None:
+        missing.append("RA")
+    if dec_col is None:
+        missing.append("Dec")
+
+    if missing:
+        print("ERROR: Required column(s) not found in batch input file:")
+        for m in missing:
+            print(f"  - {m}")
+        print(f"\nFound columns: {list(df.columns)}")
+        return None
+
+    # Build normalised DataFrame
+    out = pd.DataFrame()
+    out['Target'] = df[target_col].apply(_sanitize_target_name)
+
+    try:
+        out['RA'] = pd.to_numeric(df[ra_col], errors='coerce')
+        out['Dec'] = pd.to_numeric(df[dec_col], errors='coerce')
+    except Exception as e:
+        print(f"ERROR: Could not parse RA/Dec as numeric: {e}")
+        return None
+
+    if radius_col is not None:
+        out['Radius'] = pd.to_numeric(df[radius_col], errors='coerce')
+        out['Radius'].fillna(DEFAULT_SEARCH_RADIUS, inplace=True)
+    else:
+        out['Radius'] = DEFAULT_SEARCH_RADIUS
+
+    # Drop any rows with invalid RA/Dec
+    valid_mask = out['RA'].notna() & out['Dec'].notna()
+    invalid_count = (~valid_mask).sum()
+    if invalid_count > 0:
+        print(f"WARNING: {invalid_count} target(s) dropped due to "
+              f"unparseable RA/Dec")
+    out = out[valid_mask].reset_index(drop=True)
+
+    if len(out) == 0:
+        print("ERROR: No valid targets in batch file after parsing.")
+        return None
+
+    return out
+
+
+@contextlib.contextmanager    #I am not sure how this works?, Found this online and am using it, the @ is a decorator, which is something I dont fully understand.
+def _silenced_to_logfile(log_path):
+    """
+    Context manager that redirects stdout AND stderr to a log file.
+    The screen stays clean; everything still gets recorded for debugging.
+
+    Usage:
+        with _silenced_to_logfile('/path/to/pipeline.log'):
+            noisy_function_that_prints_a_lot()
+    """
+    log_file = open(log_path, 'w', encoding='utf-8')
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        sys.stdout = log_file
+        sys.stderr = log_file
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        log_file.close()
+
+
+@contextlib.contextmanager    #Same with this, more or less taken wholesale from what i have found online.
+def _silenced_append(log_path):
+    """
+    Like _silenced_to_logfile but opens the log file in append mode.
+    Use this for second-and-onwards silenced blocks within the same target
+    so earlier output isn't lost.
+    """
+    log_file = open(log_path, 'a', encoding='utf-8')
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        sys.stdout = log_file
+        sys.stderr = log_file
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        log_file.close()
+###########################################################################################
 
 
 
@@ -95,7 +311,11 @@ def run_heasoft_command(command):
 
     if HEASOFT_BACKEND == "wsl":
         if WSL_CONDA_ENV:
-            prefix = f"conda activate {WSL_CONDA_ENV}"
+            # Use non-interactive bash with explicit conda init.
+            prefix = (
+                f"source ~/miniforge3/etc/profile.d/conda.sh && "
+                f"conda activate {WSL_CONDA_ENV}"
+            )
         elif WSL_HEASOFT_INIT_SCRIPT:
             prefix = f"source {WSL_HEASOFT_INIT_SCRIPT}"
         else:
@@ -106,7 +326,7 @@ def run_heasoft_command(command):
 
         full_cmd = f"{prefix} && {command}"
         result = subprocess.run(
-            ["wsl", "bash", "-ic", full_cmd],
+            ["wsl", "bash", "-c", full_cmd],   # -c, no -i
             text=True,
             capture_output=True,
         )
@@ -177,7 +397,7 @@ def run_heasoft_command(command):
         print(result.stderr)
     else:
         print("  [RESULT]: SUCCESS")
-
+    time.sleep(0.05)
     return result
 
 
@@ -689,119 +909,180 @@ def download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec):
 
 def detect_smeared_frames(base_path):
     """
-    Walks through base_path and detects smeared frames by analyzing all detect files.
-    Returns a list of observation folder paths that contain smeared frames.
-    """
+    Walk base_path, analyze detect files, identify smeared frames at
+    per-extension level.
 
-    detect_pattern = re.compile(r'.*_detect.*\.fits$')
-    
+    Returns a tuple (smeared_obs_folders, smeared_extensions) where:
+      - smeared_obs_folders : list of obs folders where ALL extensions
+        are smeared (these get moved to Smeared)
+      - smeared_extensions : list of dicts with keys 'obsid', 'band',
+        'extension' for individual smeared extensions in observations
+        that have at least one good extension (these stay in place but
+        get flagged for exclusion from uvotimsum)
+    """
+    detect_pattern = re.compile(r'.*_detect(?:_ext\d+)?\.fits$') #This is so weird to look at but it is correct
+    # as the file names are either "{band}_detect.fits" , or "{band}_detect_ext{N}.fits"
     print("\n Scanning for detect files...")
-    
-    # Find all detect files
+
     detect_files = []
     for root, dirs, files in os.walk(base_path):
         if os.path.basename(root) == "image":
             for file in files:
+                # Skip the corrected detect files (they're post-summation)
+                if "_corrected_detect" in file:
+                    continue
                 if detect_pattern.match(file):
                     detect_files.append(os.path.join(root, file))
-    
+
     print(f"Found {len(detect_files)} detect files to analyze")
-    
-    smeared_obs_folders = set()  # Use set to avoid duplicates
-    
-    # Analyze each detect file
+
+    # Per-(obs_folder, band, ext) smearing flag
+    smeared_by_ext = {}   # {(obs_folder, band, ext): True}
+    all_exts_seen = {}    # {(obs_folder, band): set(ext_numbers)} — track total exts per band
+
+    band_pattern = re.compile(r'([a-z0-9]+)_detect(?:_ext(\d+))?\.fits$')
+
     for filename in tqdm(detect_files, desc="Analyzing frames"):
         try:
+            base_fn = os.path.basename(filename)
+            m = band_pattern.match(base_fn)
+            if not m:
+                continue
+            band = m.group(1)
+            ext_str = m.group(2)
+            ext_num = int(ext_str) if ext_str else 1   # Single-ext files are ext 1
+
+            obs_folder = get_observation_folder(filename, base_path)
+            if not obs_folder:
+                continue
+
+            # Track that we've seen this extension exists
+            key = (obs_folder, band)
+            if key not in all_exts_seen:
+                all_exts_seen[key] = set()
+            all_exts_seen[key].add(ext_num)
+
             with fits.open(filename, memmap=False) as hdul:
-                # Skip if no data extension
                 if len(hdul) < 2:
                     continue
-                
                 data = hdul[1].data
-                
-                # Skip if no detections
                 if data is None or len(data) == 0:
                     continue
-                
-                # Convert big-endian data to native byte order
+
                 prof_major = np.array(data['PROF_MAJOR'], dtype=np.float64)
                 prof_minor = np.array(data['PROF_MINOR'], dtype=np.float64)
                 flags = np.array(data['FLAGS'], dtype=np.int32)
-                
-                # Create DataFrame
-                detected_frame = pd.DataFrame({
+
+                df = pd.DataFrame({
                     'PROF_MAJOR': prof_major,
                     'PROF_MINOR': prof_minor,
                     'FLAGS': flags
                 })
-                
-                # Filter for good detections (FLAGS == 0)
-                detected_frame = detected_frame[detected_frame['FLAGS'] == 0]
-                
-                # Skip if no good detections
-                if len(detected_frame) == 0:
+                df = df[df['FLAGS'] == 0]
+                if len(df) == 0:
                     continue
-                
-                # Calculate eccentricity
-                a = np.mean(detected_frame['PROF_MAJOR'])
-                b = np.mean(detected_frame['PROF_MINOR'])
-                
-                # Avoid division by zero or invalid sqrt
+
+                a = np.mean(df['PROF_MAJOR'])
+                b = np.mean(df['PROF_MINOR'])
                 if a > 0 and a >= b:
                     c = math.sqrt(a**2 - b**2)
                     e = c / a
-                    
-                    # If eccentricity >= 0.5, mark the ENTIRE observation folder
                     if e >= 0.5:
-                        obs_folder = get_observation_folder(filename, base_path)
-                        
-                        if obs_folder and obs_folder not in smeared_obs_folders:
-                            smeared_obs_folders.add(obs_folder)
-                            print(f"  Smeared observation: {os.path.basename(obs_folder)} (e={e:.3f})")
-        
+                        smeared_by_ext[(obs_folder, band, ext_num)] = True
+                        print(f"  Smeared: {os.path.basename(obs_folder)} "
+                              f"{band} ext{ext_num} (e={e:.3f})")
         except Exception as ex:
             print(f"  Error processing {filename}: {ex}")
-            continue
-    
-    smeared_list = list(smeared_obs_folders)
-    print(f"\n Detection complete! Found {len(smeared_list)} smeared observation folders.")
-    return smeared_list
+
+    # Now classify: which obs folders have ALL extensions smeared (whole move),
+    # vs. partial smearing (exclude-only)?
+    smeared_obs_folders = set()
+    smeared_extensions = []
+
+    # Group flagged extensions by (obs_folder, band)
+    flagged_by_obs_band = {}
+    for (obs_folder, band, ext_num) in smeared_by_ext:
+        key = (obs_folder, band)
+        if key not in flagged_by_obs_band:
+            flagged_by_obs_band[key] = set()
+        flagged_by_obs_band[key].add(ext_num)
+
+    # Determine which observations are FULLY smeared
+    # Whole move if EVERY (obs_folder, band) is fully smeared
+    obs_folder_band_count = {}  # how many bands does each obs have
+    obs_folder_band_all_bad = {}  # how many bands are entirely smeared
+
+    for (obs_folder, band), exts_seen in all_exts_seen.items():
+        if obs_folder not in obs_folder_band_count:
+            obs_folder_band_count[obs_folder] = 0
+            obs_folder_band_all_bad[obs_folder] = 0
+        obs_folder_band_count[obs_folder] += 1
+        flagged_exts = flagged_by_obs_band.get((obs_folder, band), set())
+        if flagged_exts == exts_seen:
+            # All extensions of this band are smeared
+            obs_folder_band_all_bad[obs_folder] += 1
+        else:
+            # Partial smearing — record individual extensions
+            for ext_num in flagged_exts:
+                obsid_match = re.search(r"(\d{11})",
+                                        os.path.basename(obs_folder))
+                obsid = obsid_match.group(1) if obsid_match else None
+                if obsid:
+                    smeared_extensions.append({
+                        'obsid': obsid,
+                        'band': band,
+                        'extension': ext_num,
+                    })
+
+    # Whole move only if EVERY band is fully smeared
+    for obs_folder, total_bands in obs_folder_band_count.items():
+        if obs_folder_band_all_bad.get(obs_folder, 0) == total_bands:
+            smeared_obs_folders.add(obs_folder)
+
+    smeared_obs_folders = list(smeared_obs_folders)
+
+    print(f"\n Smearing detection complete:")
+    print(f"  Fully-smeared observations (will be moved): "
+          f"{len(smeared_obs_folders)}")
+    print(f"  Partially-smeared extensions (will be excluded from summation): "
+          f"{len(smeared_extensions)}")
+
+    return smeared_obs_folders, smeared_extensions
 
 
+####################################################
 def remove_smeared(base_path, smeared_obs_folders):
     """
-    Moves smeared observation folders to a 'Smeared' directory.
+    Move WHOLE moving-smeared observation folders into a Smeared/ subdirectory.
     """
     if not smeared_obs_folders:
-        print("No smeared frames to move.")
-        return
-    
-    # Create Smeared directory
+        print("No smeared observations to move.")
+        return 0
+
     smeared_dir = os.path.join(base_path, "Smeared")
     os.makedirs(smeared_dir, exist_ok=True)
-    
-    print(f"\n Moving {len(smeared_obs_folders)} smeared observations...")
-    
-    moved_count = 0
+
+    print(f"\n Moving {len(smeared_obs_folders)} smeared "
+          f"observations to Smeared/...")
+    moved = 0
     for obs_folder in smeared_obs_folders:
         try:
             obs_name = os.path.basename(obs_folder)
             destination = os.path.join(smeared_dir, obs_name)
-            
-            # Skip if already exists in Smeared
             if os.path.exists(destination):
-                print(f"   {obs_name} already in Smeared folder, skipping...")
+                print(f"{obs_name} already in Smeared/, skipping")
                 continue
-            
             shutil.move(obs_folder, destination)
-            print(f"  Moved: {obs_name}")
-            moved_count += 1
-            
+            print(f" Moved: {obs_name}")
+            moved += 1
         except Exception as ex:
-            print(f"  Error moving {obs_folder}: {ex}")
-    
-    print(f"\n Smeared frame removal complete! Moved {moved_count} observation folders.")
-    return moved_count
+            print(f" Error moving {obs_folder}: {ex}")
+
+    print(f"\n smeared removal complete! Moved {moved} folders.")
+    print(f" (Partial-smear extensions remain in place; excluded at uvotimsum.)")
+    return moved
+
+#############################
 
 
 def get_observation_folder(detect_filepath, base_path):
@@ -1868,12 +2149,27 @@ def solve_orphan_frames_by_group(base_path=None, save_dir=None, return_data=Fals
         for _, frame in target_frames.iterrows(): #Grab some info we will need life the location both in space and on the computer.
             f_ra, f_dec, f_obsid = frame['RA'], frame['Dec'], frame['OBSID']
             f_path = frame['Full_Path']
-            
             # Simple subtraction for distance math
             # dRA: Positive = East, Negative = West
             # dDec: Positive = North, Negative = South, Kinda weird part here if you check SAO it has east being positive even though logic would make it negative.
             band_refs['dRA'] = band_refs['RA'] - f_ra
             band_refs['dDec'] = band_refs['Dec'] - f_dec
+            
+            # Filter candidate neighbors by angular distance from the
+            # orphan's pointing center. Neighbors more than
+            # ORPHAN_MAX_NEIGHBOR_ARCMIN away are off-target observations
+            # that just happen to share sky, including them in the synthetic
+            # would give uvotunicorr a wrong-pointing reference and produce
+            # a bad correction.
+            ang_dist_deg = np.sqrt(band_refs['dRA']**2 + band_refs['dDec']**2)
+            ang_dist_arcmin = ang_dist_deg * 60.0
+            distance_mask = ang_dist_arcmin <= ORPHAN_MAX_NEIGHBOR_ARCMIN
+            filtered_refs = band_refs[distance_mask]
+
+            if len(filtered_refs) < 2:
+                # Not enough same-pointing neighbors to build a useful
+                # synthetic. Skip this orphan; it'll go to quarantine.
+                continue
 
             neighbors = []
             
@@ -1914,6 +2210,447 @@ def solve_orphan_frames_by_group(base_path=None, save_dir=None, return_data=Fals
         print(f" All CSVs saved to: {orphan_save_path}")
     
     return automation_results if return_data else None
+
+
+
+###############################################################################
+# ORPHAN RESCUE — BUILD SYNTHETIC REFERENCE PER GROUP, RUN UVOTUNICORR
+###############################################################################
+
+def build_synthetic_reference(group_orphans, base_path, save_path,
+                              band, group_id, work_dir):
+    """
+    Build a synthetic reference image for one orphan group + band.
+
+    Combines all 4-direction reference frames identified by
+    solve_orphan_frames_by_group() (across all orphans in this group) into
+    one fappended multi-extension file, then summed via uvotimsum.
+
+    Returns the path to the synthetic ref image, or None on failure.
+    """
+    # Collect unique reference paths from the orphan solutions
+    ref_paths = set()
+    for solution_df in group_orphans:
+        if solution_df is None or solution_df.empty:
+            continue
+        band_solutions = solution_df[solution_df['Band'] == band]
+        for ref_path in band_solutions['Full_Path']:
+            if not isinstance(ref_path, str):
+                continue
+            ref_paths.add(ref_path)
+
+    if len(ref_paths) < 2:
+        print(f" [Group {group_id} / {band}] Only {len(ref_paths)} reference "
+              f"frame(s) — insufficient to build synthetic")
+        return None
+
+    ref_paths = sorted(ref_paths)  # deterministic ordering
+    print(f"  [Group {group_id} / {band}] Building synthetic from "
+          f"{len(ref_paths)} reference frames")
+
+    # Copy references into a working directory
+    synth_dir = os.path.join(work_dir, f"group_{group_id}_{band}")
+    os.makedirs(synth_dir, exist_ok=True)
+
+    copied_refs = []
+    for i, ref_path in enumerate(ref_paths):
+        if not os.path.exists(ref_path):
+            continue
+        # Copy and unzip if necessary
+        local_name = f"ref_{i:03d}_{os.path.basename(ref_path)}"
+        local_path = os.path.join(synth_dir, local_name)
+        if ref_path.endswith(".gz"):
+            # Copy then gunzip
+            shutil.copy(ref_path, local_path)
+            run_heasoft_command(f"gunzip -f '{prepare_path(local_path)}'")
+            local_path = local_path[:-3]
+        else:
+            shutil.copy(ref_path, local_path)
+        if os.path.exists(local_path):
+            copied_refs.append(local_path)
+
+    if len(copied_refs) < 2:
+        print(f" [Group {group_id} / {band}] Could not copy enough references")
+        return None
+
+    # Use first reference as the master; fappend others into it
+    master_path = os.path.join(synth_dir, f"master_{band}.img")
+    shutil.copy(copied_refs[0], master_path)
+
+    for ref in copied_refs[1:]:
+        # fappend: appends all extensions of ref into master
+        # bash command runs through run_heasoft_command which handles
+        # cross-platform routing
+        master_heasoft = prepare_path(master_path)
+        ref_heasoft = prepare_path(ref)
+        cmd = f"fappend '{ref_heasoft}' '{master_heasoft}'"
+        run_heasoft_command(cmd)
+        time.sleep(0.5)
+
+    # Sum all extensions of master into synthetic
+    synthetic_path = os.path.join(synth_dir, f"synthetic_{band}.fits")
+    if os.path.exists(synthetic_path):
+        try:
+            os.remove(synthetic_path)
+        except Exception:
+            pass
+
+    synth_dir_heasoft = prepare_path(synth_dir)
+    sum_cmd = (
+        f"cd '{synth_dir_heasoft}' && "
+        f"uvotimsum infile='{os.path.basename(master_path)}' "
+        f"outfile='{os.path.basename(synthetic_path)}' "
+        f"exclude=NONE"
+    )
+    run_heasoft_command(sum_cmd)
+    time.sleep(1)
+
+    if not os.path.exists(synthetic_path):
+        print(f" [Group {group_id} / {band}] uvotimsum failed to produce "
+              f"synthetic")
+        return None
+
+    # Generate detect file for the synthetic (needed for star matching)
+    synth_detect = os.path.join(synth_dir, f"synthetic_{band}_detect.fits")
+    detect_cmd = (
+        f"cd '{synth_dir_heasoft}' && "
+        f"uvotdetect "
+        f"infile='{os.path.basename(synthetic_path)}' "
+        f"outfile='{os.path.basename(synth_detect)}' "
+        f"expfile=NONE threshold=3"
+    )
+    run_heasoft_command(detect_cmd)
+    time.sleep(1)
+
+    if not os.path.exists(synth_detect):
+        print(f" [Group {group_id} / {band}] uvotdetect failed on synthetic")
+        return None
+
+    return synthetic_path
+
+
+def rescue_orphan_frames(obs_table, base_path, save_path,
+                         orphan_solutions=None, manual_mode=False):
+    """
+    Attempt to recover orphan frames by aspect-correcting them against
+    synthetic reference images built from their N/E/S/W neighbors.
+
+    Returns updated obs_table with Group_Status updated for any frames
+    that were successfully corrected (ORPHAN -> READY, READYRESUM, or
+    COMPLETED depending on per-extension status).
+
+
+    This has been difficult, I have run many tests and have read up on
+    how UVOTUNICORR actually works to discover my issue.
+    UVOTUNICORR just chanes the WCS it changes what pixels=what position on the sky
+    as this might not be right, what the code is trying to do is shift it to the
+    true values that are confirmed.
+
+    However the orphan code it its earlyier state was have a massive issue with this,
+    Two bad test orphans, were screened and showed that they were in fact pointing 
+    towards a different object, case 1 being SwiftJ005606, so uvotunicorr's did its job 
+    to match the orphan's stars against the synthetic's stars 
+    it succeeded at this mathematical task but the synthetic represents a different sky region, 
+    so the "match" pulls the orphan's WCS toward SXP 5.05's sky position, 
+    not toward SwiftJ005606's actual sky position. causing the source to "fall" off the region.
+    As the SK file's WCS now says "this image is cnetered on SXP 5.05 regon" which is wrong
+    so _corrected_detect.fits, genrated from this file reads correct pixel positions but
+    assigns them wrong sky coordinates. That is a bit of an issue, one that isnt easy to solve
+    even after you spend many a hour looking into what could be causing it, what I am now
+    resorting to is just checks. two in particular, since I can exactly fix the WCS (in any way I know)
+    we instead do the following
+
+    Check 1: check the uvotunicorr correction shifct, typically seems to within 1-10", so at the top
+    we have a variable set to 15" and if anything goes above that, revert the file from .gz and mark failed
+
+    check 2: is a backup, if somehow 1 fails. After rescue, run uvotdetect on the corrected SK files. The
+    Source Should now appear in the catalog at sky position close to our target RA-DEC. If no source is within
+    10" the WCS is proably wrong, revert the file from .gz and mark failed.
+    
+    """
+    print("\n" + "=" * 70)
+    print("ORPHAN RESCUE — SYNTHETIC REFERENCE CORRECTION")
+    print("=" * 70)
+
+    if orphan_solutions is None or len(orphan_solutions) == 0:
+        print("No orphan solutions available — nothing to rescue.")
+        return obs_table
+
+    # Group orphan solutions by (Group_ID, Band)
+    # orphan_solutions is dict: {f"{obsid}_{band}": DataFrame of 4 neighbors}
+    # We need to back out which group each orphan belongs to via obs_table
+
+    work_dir = os.path.join(save_path, "_orphan_rescue_work")
+    os.makedirs(work_dir, exist_ok=True)
+
+    # Build a mapping: (group_id, band) -> list of orphan solution DataFrames
+    group_band_orphans = {}      # {(group_id, band): [solution_df, ...]}
+    group_band_orphan_meta = {}  # {(group_id, band): [(obsid, snapshot, full_path), ...]}
+
+    for key, solution_df in orphan_solutions.items():
+        if solution_df is None or solution_df.empty:
+            continue
+        # Parse key: "{obsid}_{band}"
+        parts = key.rsplit('_', 1)
+        if len(parts) != 2:
+            continue
+        obsid, band = parts
+
+        # Find this orphan's group_id from obs_table
+        mask = ((obs_table['ObsID'].astype(str) == obsid) &
+                (obs_table['Filter'] == band))
+        if not mask.any():
+            continue
+        group_id = obs_table.loc[mask, 'Group_ID'].iloc[0]
+
+        bk = (group_id, band)
+        if bk not in group_band_orphans:
+            group_band_orphans[bk] = []
+            group_band_orphan_meta[bk] = []
+        group_band_orphans[bk].append(solution_df)
+
+        # Find orphan-frame metadata: each orphan can have multiple extensions
+        for _, row in obs_table.loc[mask].iterrows():
+            if row['Extension_Status'] == 'NONE':
+                group_band_orphan_meta[bk].append({
+                    'obsid': str(row['ObsID']),
+                    'snapshot': int(row['Snapshot']),
+                    'full_path': row['Full_Path'],
+                })
+
+    if not group_band_orphans:
+        print("No orphan groups identified for rescue.")
+        return obs_table
+
+    print(f"Found {len(group_band_orphans)} orphan group/band combinations "
+          f"to attempt rescue on.")
+
+    # For each (group, band), build a synthetic and try to correct
+    total_rescued = 0
+    total_attempted = 0
+
+    for (group_id, band), solution_list in group_band_orphans.items():
+        print(f"\n--- Group {group_id} / Band {band} ---")
+        meta_list = group_band_orphan_meta[(group_id, band)]
+        if not meta_list:
+            print("  No orphan extensions to correct.")
+            continue
+
+        print(f" {len(meta_list)} orphan extension(s) to attempt")
+
+        # Build synthetic reference
+        synthetic_path = build_synthetic_reference(
+            group_orphans=solution_list,
+            base_path=base_path,
+            save_path=save_path,
+            band=band,
+            group_id=group_id,
+            work_dir=work_dir,
+        )
+
+        if synthetic_path is None:
+            print(f" Could not build synthetic for Group {group_id} / {band}")
+            continue
+
+        synth_dir = os.path.dirname(synthetic_path)
+        synth_detect = os.path.join(synth_dir, f"synthetic_{band}_detect.fits")
+
+        # Now iterate through each orphan extension, run uvotunicorr against synthetic
+        for orphan in meta_list:
+            obs_obsid = orphan['obsid']
+            obs_snapshot = orphan['snapshot']
+            obs_full_path = orphan['full_path']
+            obs_dir = os.path.dirname(obs_full_path)
+
+            if not os.path.exists(obs_dir):
+                continue
+
+            obs_detect = os.path.join(obs_dir, f"{band}_detect_ext{obs_snapshot}.fits")
+            if not os.path.exists(obs_detect):
+                obs_detect = os.path.join(obs_dir, f"{band}_detect.fits")
+            if not os.path.exists(obs_detect):
+                print(f" [{obs_obsid} ext{obs_snapshot}] No detect file — skipping")
+                continue
+
+            print(f" [{obs_obsid} ext{obs_snapshot}] Attempting correction "
+                  f"against synthetic...")
+            total_attempted += 1
+
+            # Try the retry ladder same as automated_aspect_correction
+            success = False
+            for attempt_num, (sb, ns) in enumerate(ASPECT_RETRY_LADDER):
+                try:
+                    ref_bright = find_brightest_central_stars(
+                        synth_detect, num_stars=ns, side_buffer=sb
+                    )
+                    obs_bright = find_brightest_central_stars(
+                        obs_detect, num_stars=ns, side_buffer=sb
+                    )
+                    ref_filt, obs_filt = remove_separate_stars(
+                        ref_bright.copy(), obs_bright
+                    )
+                    if len(ref_filt) < 3:
+                        continue
+
+                    create_ref_obs_reg_files(ref_filt, obs_filt, outpath=obs_dir)
+
+                    # Copy synthetic into obs dir
+                    synth_local = os.path.join(obs_dir, os.path.basename(synthetic_path))
+                    if not os.path.exists(synth_local):
+                        shutil.copy(synthetic_path, synth_local)
+
+                    # Find or unzip obs SK file
+                    obs_base = f"sw{obs_obsid}{band}_sk"
+                    obs_files_list = [f for f in os.listdir(obs_dir)
+                                      if f.startswith(obs_base) and not f.endswith('.gz')]
+                    if not obs_files_list:
+                        # Need to unzip
+                        gz_file = os.path.join(obs_dir, f"sw{obs_obsid}{band}_sk.img.gz")
+                        if os.path.exists(gz_file):
+                            run_heasoft_command(f"gunzip -k '{prepare_path(gz_file)}'")
+                            obs_files_list = [f for f in os.listdir(obs_dir)
+                                              if f.startswith(obs_base) and not f.endswith('.gz')]
+                    if not obs_files_list:
+                        continue
+
+                    obs_img = obs_files_list[0]
+
+                    # Run uvotunicorr — synthetic uses extension 1 only
+                    obs_heasoft = prepare_path(obs_dir)
+                    cmd = (
+                        f"cd '{obs_heasoft}' && "
+                        f"uvotunicorr "
+                        f"obsfile='{obs_img}[{obs_snapshot}]' "
+                        f"reffile='{os.path.basename(synthetic_path)}[1]' "
+                        f"obsreg='obs.reg' "
+                        f"refreg='ref.reg'"
+                    )
+                    run_heasoft_command(cmd)
+                    time.sleep(3)
+
+                    # Verify
+                    corrected_files = sorted(
+                        [f for f in os.listdir(obs_dir)
+                         if f.startswith(obs_base) and not f.endswith('.gz')],
+                        key=lambda x: (len(x), x)
+                    )
+                    if corrected_files:
+                        with fits.open(os.path.join(obs_dir, corrected_files[0])) as hdul:
+                            if obs_snapshot < len(hdul):
+                                aspcorr = str(hdul[obs_snapshot].header.get(
+                                    'ASPCORR', 'NONE')).strip().upper()
+                                if aspcorr in ('DIRECT', 'UNICORR'):
+                                    # Read corrected CRVAL and compare to original
+                                    new_crval1 = float(hdul[obs_snapshot].header.get(
+                                        'CRVAL1', 0.0))
+                                    new_crval2 = float(hdul[obs_snapshot].header.get(
+                                        'CRVAL2', 0.0))
+
+                                    # Get original CRVAL from .gz (immutable)
+                                    gz_path = os.path.join(obs_dir,
+                                        f"sw{obs_obsid}{band}_sk.img.gz")
+                                    original_crval1 = new_crval1
+                                    original_crval2 = new_crval2
+                                    if os.path.exists(gz_path):
+                                        try:
+                                            with fits.open(gz_path) as orig_hdul:
+                                                if obs_snapshot < len(orig_hdul):
+                                                    original_crval1 = float(
+                                                        orig_hdul[obs_snapshot].header.get(
+                                                            'CRVAL1', new_crval1))
+                                                    original_crval2 = float(
+                                                        orig_hdul[obs_snapshot].header.get(
+                                                            'CRVAL2', new_crval2))
+                                        except Exception:
+                                            pass
+
+                                    shift_arcsec = float(
+                                        np.sqrt(
+                                            (new_crval1 - original_crval1) ** 2 +
+                                            (new_crval2 - original_crval2) ** 2
+                                        ) * 3600
+                                    )
+
+                                    if shift_arcsec > ORPHAN_MAX_SHIFT_ARCSEC:
+                                        # Suspicious correction — likely wrong-target
+                                        # synthetic reference. Revert the file to
+                                        # its original state and mark rescue as failed.
+                                        print(f"      ⚠ REJECTED (attempt "
+                                              f"{attempt_num+1}, params=({sb},{ns})) — "
+                                              f"shift {shift_arcsec:.1f}\" exceeds "
+                                              f"threshold {ORPHAN_MAX_SHIFT_ARCSEC}\"")
+                                        # Restore the SK file from .gz
+                                        if os.path.exists(gz_path):
+                                            try:
+                                                run_heasoft_command(
+                                                    f"gunzip -kf '{prepare_path(gz_path)}'"
+                                                )
+                                            except Exception as e:
+                                                print(f"      ⚠ Could not restore "
+                                                      f".img from .gz: {e}")
+                                        # Continue to next attempt in retry ladder
+                                        # (or fall through if this was the last attempt)
+                                        continue
+
+                                    print(f"✅ Rescued (attempt "
+                                          f"{attempt_num+1}, params=({sb},{ns})) — "
+                                          f"shift {shift_arcsec:.1f}\"")
+                                    success = True
+                                    total_rescued += 1
+
+                                    # Update obs_table for this row
+                                    upd_mask = (
+                                        (obs_table['ObsID'].astype(str) == obs_obsid) &
+                                        (obs_table['Filter'] == band) &
+                                        (obs_table['Snapshot'].astype(int) == obs_snapshot)
+                                    )
+                                    obs_table.loc[upd_mask, 'Extension_Status'] = 'DIRECT'
+                                    obs_table.loc[upd_mask, 'AspCorr Flag'] = True
+                                    break
+                except Exception as e:
+                    print(f" ❌ Error on attempt {attempt_num+1}: {e}")
+                    continue
+
+            if not success:
+                print(f" ❌ Could not rescue [{obs_obsid} ext{obs_snapshot}] "
+                      f"after {len(ASPECT_RETRY_LADDER)} attempts")
+
+    # After all rescues, update Group_Status for groups that are no longer orphans
+    print("\nUpdating Group_Status after rescue...")
+    for group_id in obs_table['Group_ID'].unique():
+        for band in obs_table[obs_table['Group_ID'] == group_id]['Filter'].unique():
+            sub = obs_table[(obs_table['Group_ID'] == group_id) &
+                            (obs_table['Filter'] == band)]
+            has_direct = (sub['Extension_Status'].isin(['DIRECT', 'UNICORR'])).any()
+            has_none = (sub['Extension_Status'] == 'NONE').any()
+            if has_direct and has_none:
+                new_status = 'READYRESUM'
+            elif has_direct:
+                new_status = 'COMPLETED'
+            elif has_none:
+                new_status = 'ORPHAN'
+            else:
+                continue
+            obs_table.loc[((obs_table['Group_ID'] == group_id) &
+                          (obs_table['Filter'] == band)), 'Group_Status'] = new_status
+
+    # Save updated obs_table
+    table_path = os.path.join(save_path, "observations_table.csv")
+    obs_table.to_csv(table_path, index=False)
+
+    # Clean up the work directory, (This can be removed if you wanna see the work for bug testing)
+    try:
+        shutil.rmtree(work_dir)
+    except Exception:
+        pass
+
+    print(f"\nORPHAN RESCUE SUMMARY")
+    print(f"  Attempted:   {total_attempted}")
+    print(f"  Rescued:     {total_rescued}")
+    print(f"  Failed:      {total_attempted - total_rescued}")
+    print("=" * 70)
+
+    return obs_table
 
 
 ######################################################################################
@@ -2064,35 +2801,50 @@ def populate_observations_table(base_path, all_frames_df, summary_df):
     return obs_table
 
 
-def update_smeared_flags(obs_table, smeared_list):
+def update_smeared_flags(obs_table, smeared_obs_folders,
+                        smeared_extensions=None):
     """
-    Updates the Smeared Flag column based on the smeared_list.
-
-    Extracts OBSID from smeared folder paths using regex instead of
-    assuming the folder name IS the OBSID. That Was a mistake.
+    Update the obs_table 'Smeared Flag' column to reflect detected smearing.
+      - smeared_obs_folders : list of folder paths where ALL extensions are
+        smeared. All rows for those OBSIDs get flagged. These rows will
+        be filtered out of summation and uvotsource by the smeared-obs
+        skip logic AND by remove_smeared() which moves the folder out
+        entirely.
+      - smeared_extensions : list of dicts with 'obsid', 'band', 'extension'
+        for individual bad extensions. Only that specific row gets flagged.
+        The observation stays in place, and the summation logic uses the
+        flag to exclude that extension from uvotimsum.
     """
-    if not smeared_list:
+    if not smeared_obs_folders and not smeared_extensions:
         return obs_table
-
-    print(f"\nUpdating smeared flags for {len(smeared_list)} observations...")
 
     obsid_pattern = re.compile(r'(\d{11})')
 
-    for smeared_folder in smeared_list:
-        # smeared_folder could be a full path or just a folder name
-        folder_name = os.path.basename(smeared_folder) if os.sep in str(smeared_folder) else str(smeared_folder)
+    # 1. Whole moveing-smeared observations
+    if smeared_obs_folders:
+        print(f"\nFlagging {len(smeared_obs_folders)} wholesale-smeared "
+              f"observations...")
+        for smeared_folder in smeared_obs_folders:
+            folder_name = (os.path.basename(smeared_folder)
+                           if os.sep in str(smeared_folder)
+                           else str(smeared_folder))
+            match = obsid_pattern.search(folder_name)
+            if match:
+                obsid = match.group(1)
+                mask = obs_table['ObsID'].astype(str) == obsid
+                if mask.any():
+                    obs_table.loc[mask, 'Smeared Flag'] = True
 
-        match = obsid_pattern.search(folder_name)
-        if match:
-            obsid = match.group(1)
-            mask = obs_table['ObsID'] == obsid
+    # 2. Per-extension flags (only flag specific rows)
+    if smeared_extensions:
+        print(f"Flagging {len(smeared_extensions)} individual smeared "
+              f"extensions...")
+        for smeared in smeared_extensions:
+            mask = ((obs_table['ObsID'].astype(str) == str(smeared['obsid'])) &
+                    (obs_table['Filter'] == smeared['band']) &
+                    (obs_table['Snapshot'].astype(int) == int(smeared['extension'])))
             if mask.any():
                 obs_table.loc[mask, 'Smeared Flag'] = True
-                print(f"Marked {obsid} as smeared")
-            else:
-                print(f"Warning: OBSID {obsid} from smeared list not found in obs_table")
-        else:
-            print(f"Warning: Could not extract OBSID from smeared folder: {smeared_folder}")
 
     return obs_table
     
@@ -2135,6 +2887,215 @@ def refresh_observations_table_after_correction(obs_table, corrected_obsids, ban
             except Exception as e:
                 print(f"Warning: Could not update table for {obsid} ext {snapshot}: {e}")
     
+    return obs_table
+
+
+
+###############################################################################
+# SSS (SMALL-SCALE SENSITIVITY) PRE-SUMMATION CHECK
+###############################################################################
+
+def check_sss_before_summation(obs_table, base_path, save_path,
+                               target_ra, target_dec,
+                               source_radius=5.0, bkg_radius=8.0,
+                               bkg_offset=30.0):
+    """
+    Pre-summation small-scale-sensitivity (SSS) check.
+
+    For each MULTI-EXTENSION observation, runs uvotsource on each individual
+    extension to determine whether the target source lands on a known bad
+    pixel.  uvotsource reports AB_MAG=99 when this happens so these extensions
+    must be excluded from uvotimsum or they will corrupt the summed image.
+
+    Updates the 'SSS Flag' column in obs_table for any extension that
+    returns AB_MAG=99.  Single-extension observations are not checked here;
+    they fall through to the regular uvotsource pass where AB_MAG=99 will
+    be caught at the final filter stage.
+
+    Uses temporary source/background regions (target coords + offset) just
+    to get a uvotsource run.  Centroid accuracy doesn't matter for the SSS
+    detection — if the source lands on a bad pixel, uvotsource returns 99
+    regardless of how perfectly the region is centered or if the bkg is bad. (I THINK)
+
+    Parameters are as follows,
+    obs_table : pd.DataFrame
+        The observations table with one row per (OBSID, Band, Snapshot).
+    base_path : str
+        Root data directory.
+    save_path : str
+        Where to write sss_failures.csv diagnostic.
+    target_ra, target_dec : float
+        Source coordinates in decimal degrees.
+    source_radius : float
+        Temp source aperture, arcsec.  Default 5".
+    bkg_radius : float
+        Temp background aperture, arcsec.  Default 8".
+    bkg_offset : float
+        Offset from source where temp background is placed, arcsec.
+        Default 30".
+
+    Returns
+    -------
+    obs_table : pd.DataFrame
+        Updated obs_table with 'SSS Flag' set to True for extensions
+        whose uvotsource produced AB_MAG=99.
+    """
+    print("\n" + "=" * 70)
+    print("PRE-SUMMATION SSS CHECK")
+    print("=" * 70)
+    print(f"Target: RA={target_ra:.6f}, Dec={target_dec:.6f}")
+
+    # Find which OBSID+Band combos are multi-extension (>1 row in obs_table)
+    multi_ext_groups = (
+        obs_table.groupby(['ObsID', 'Filter']).filter(lambda g: len(g) > 1))
+    if multi_ext_groups.empty:
+        print("No multi-extension observations to check. Skipping SSS check.")
+        return obs_table
+
+    n_to_check = len(multi_ext_groups)
+    print(f"Checking {n_to_check} multi-extension snapshots across "
+          f"{multi_ext_groups[['ObsID', 'Filter']].drop_duplicates().shape[0]} "
+          f"observations...")
+
+    # Build temp source region content
+    src_reg_text = (
+        f'# Region file format: DS9 version 4.1\n'
+        f'fk5\n'
+        f'circle({target_ra},{target_dec},{source_radius}")\n'
+    )
+    # Temp background offset to the East by bkg_offset arcsec
+    bkg_dec = target_dec
+    bkg_ra = target_ra + (bkg_offset / 3600.0) / max(0.001, abs(np.cos(np.radians(target_dec))))
+    bkg_reg_text = (
+        f'# Region file format: DS9 version 4.1\n'
+        f'fk5\n'
+        f'circle({bkg_ra},{bkg_dec},{bkg_radius}")\n'
+    )
+
+    sss_failures = []
+    sss_count = 0
+    checked = 0
+    errored = 0
+
+    # Group by (ObsID, Filter) so we process all extensions of one file together
+    for (obsid, band), group in multi_ext_groups.groupby(['ObsID', 'Filter']):
+        img_dir = os.path.dirname(group['Full_Path'].iloc[0])
+        if not os.path.exists(img_dir):
+            continue
+
+        # Locate the SK image
+        sk_img = f"sw{obsid}{band}_sk.img"
+        sk_gz = f"sw{obsid}{band}_sk.img.gz"
+        if os.path.exists(os.path.join(img_dir, sk_img)):
+            sk_filename = sk_img
+        elif os.path.exists(os.path.join(img_dir, sk_gz)):
+            sk_filename = sk_gz
+        else:
+            continue
+
+        # Write temp regions
+        temp_src = os.path.join(img_dir, "_sss_src_tmp.reg")
+        temp_bkg = os.path.join(img_dir, "_sss_bkg_tmp.reg")
+        with open(temp_src, 'w') as f:
+            f.write(src_reg_text)
+        with open(temp_bkg, 'w') as f:
+            f.write(bkg_reg_text)
+
+        # Run uvotsource for each extension in the group
+        for _, row in group.iterrows():
+            ext = int(row['Snapshot'])
+            if row['Extension_Status'] not in ('DIRECT', 'UNICORR'):
+                # Skip uncorrected extensions — they'd fail anyway
+                continue
+
+            temp_out = os.path.join(img_dir, f"_sss_check_ext{ext}.fits")
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+
+            if HEASOFT_BACKEND == "wsl":
+                wsl_d = prepare_path(img_dir)
+                cmd = (f"cd '{wsl_d}' && "
+                       f"uvotsource image='{sk_filename}[{ext}]' "
+                       f"srcreg='_sss_src_tmp.reg' "
+                       f"bkgreg='_sss_bkg_tmp.reg' "
+                       f"sigma=3 expfile=NONE "
+                       f"zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB "
+                       f"syserr=NO frametime=DEFAULT apercorr=NONE output=ALL "
+                       f"outfile='_sss_check_ext{ext}.fits' "
+                       f"cleanup=YES clobber=YES chatter=0")
+            else:
+                cmd = (f"cd '{img_dir}' && "
+                       f"uvotsource image='{sk_filename}[{ext}]' "
+                       f"srcreg='_sss_src_tmp.reg' "
+                       f"bkgreg='_sss_bkg_tmp.reg' "
+                       f"sigma=3 expfile=NONE "
+                       f"zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB "
+                       f"syserr=NO frametime=DEFAULT apercorr=NONE output=ALL "
+                       f"outfile='_sss_check_ext{ext}.fits' "
+                       f"cleanup=YES clobber=YES chatter=0")
+
+            run_heasoft_command(cmd)
+            checked += 1
+
+            # Read result
+            if not os.path.exists(temp_out):
+                errored += 1
+                continue
+
+            try:
+                with fits.open(temp_out) as hdul:
+                    if len(hdul) >= 2 and hdul[1].data is not None and len(hdul[1].data) > 0:
+                        ab_mag = float(hdul[1].data['AB_MAG'][0])
+                        if ab_mag == 99.0 or not np.isfinite(ab_mag):
+                            # Flag this extension as SSS-bad
+                            mask = ((obs_table['ObsID'] == obsid) &
+                                    (obs_table['Filter'] == band) &
+                                    (obs_table['Snapshot'] == ext))
+                            obs_table.loc[mask, 'SSS Flag'] = True
+                            sss_count += 1
+                            sss_failures.append({
+                                'ObsID': obsid,
+                                'Band': band,
+                                'Snapshot': ext,
+                                'AB_MAG': ab_mag,
+                                'Directory': img_dir,
+                            })
+                            print(f"  [{obsid} / {band} ext{ext}] SSS-flagged (AB_MAG=99)")
+            except Exception as e:
+                print(f"  [{obsid} / {band} ext{ext}] Error reading result: {e}")
+                errored += 1
+
+            # Clean up the temp uvotsource output
+            try:
+                os.remove(temp_out)
+            except Exception:
+                pass
+
+        # Clean up temp regions
+        for tmp in (temp_src, temp_bkg):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+    # Save diagnostic
+    if sss_failures:
+        sss_df = pd.DataFrame(sss_failures)
+        sss_path = os.path.join(save_path, "sss_failures.csv")
+        sss_df.to_csv(sss_path, index=False)
+        print(f"\n  SSS failure report saved: {sss_path}")
+
+    # Save updated obs_table
+    table_path = os.path.join(save_path, "observations_table.csv")
+    obs_table.to_csv(table_path, index=False)
+
+    print(f"\nSSS check summary:")
+    print(f"  Extensions checked: {checked}")
+    print(f"  Flagged as SSS (AB_MAG=99): {sss_count}")
+    print(f"  Errored during check: {errored}")
+    print(f"  observations_table.csv updated with SSS flags")
+    print("=" * 70)
+
     return obs_table
 
 
@@ -2300,26 +3261,63 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
 
             try:
                 with fits.open(img_full_path) as hdul:
-                    good_exts = []    # Extension numbers with DIRECT/UNICORR
-                    bad_exts = []     # Extension numbers with NONE
+                    good_exts = []
+                    bad_exts = []
                     ext_num = 0
- 
                     for hdu in hdul:
-                        naxis = hdu.header.get('NAXIS', 0)
-                        if naxis < 2:
-                            continue  # Skip primary HDU / non-image extensions
+                        if hdu.header.get('NAXIS', 0) < 2:
+                            continue
                         ext_num += 1
                         val = str(hdu.header.get('ASPCORR', 'NONE')).strip().upper()
                         if val == 'DIRECT':
                             good_exts.append(ext_num)
                         else:
                             bad_exts.append(ext_num)
- 
                     total_exts = len(good_exts) + len(bad_exts)
+
+                # Quality-flag check: move SSS-flagged AND smeared extensions
+                # into bad_exts so uvotimsum's exclude them.
+                if obs_table is not None:
+                    flagged_exts = set()
+
+                    # SSS-flagged extensions
+                    if 'SSS Flag' in obs_table.columns:
+                        sss_mask = (
+                            (obs_table['ObsID'].astype(str) == str(obsid)) &
+                            (obs_table['Filter'] == band) &
+                            (obs_table['SSS Flag'] == True)
+                        )
+                        flagged_exts.update(
+                            obs_table.loc[sss_mask, 'Snapshot'].astype(int).tolist()
+                        )
+
+                    # Smeared extensions
+                    if 'Smeared Flag' in obs_table.columns:
+                        smear_mask = (
+                            (obs_table['ObsID'].astype(str) == str(obsid)) &
+                            (obs_table['Filter'] == band) &
+                            (obs_table['Smeared Flag'] == True)
+                        )
+                        flagged_exts.update(
+                            obs_table.loc[smear_mask, 'Snapshot'].astype(int).tolist()
+                        )
+
+                    if flagged_exts:
+                        moved = []
+                        for ext in flagged_exts:
+                            if ext in good_exts:
+                                good_exts.remove(ext)
+                                bad_exts.append(ext)
+                                moved.append(ext)
+                        if moved:
+                            print(f"  [{obsid} / {band}] Quality-flagged extensions "
+                                  f"moved to exclude: {sorted(moved)}")
+                            
             except Exception as e:
                 print(f"  [{obsid} / {band}] Error reading FITS: {e}")
                 continue
- 
+
+            
             # No image extensions at all, skip
             if total_exts == 0:
                 continue
@@ -2764,60 +3762,69 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
     #################################################################################
     # Write Excel workbook (All_Data + per-band sheets + Summary)
 
-    # ALWAYS write CSV first as a safety net (xlsx can fail mid-write
-    # leaving an unreadable file).  CSV is plain text, can't corrupt.
+    #################################################################################
+    # FINAL SSS FILTER: drop any rows where AB_MAG=99 or AB_MAG_ERR=99
+    # These are extensions where the source landed on a bad pixel 
+    # whether caught by pre-summation SSS check (multi-ext) or surfacing
+    # here for single-ext observations where pre-check couldn't help.
+    # For review this is mkaing a "final_sss_dropped.txt" — rows that got dropped, for inspection
+    # and "sss_failures.csv" — extensions flagged at the pre-summation check
+    #################################################################################
+    sss_dropped = 0
     if not df_all.empty:
-        csv_path = os.path.join(save_path, "master_photometry.csv")
-        df_all.to_csv(csv_path, index=False)
-        print(f"  Master CSV saved: {csv_path}")
-        
-    excel_path = os.path.join(save_path, "UVOT_Data_Analysis.xlsx")
-    try:
-        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-            # Combined sheet
-            if not df_all.empty:
-                df_all.to_excel(writer, sheet_name="All_Data", index=False)
+        # AB_MAG=99 means uvotsource couldn't measure the source
+        mag_99_mask = pd.Series(False, index=df_all.index)
+        if 'AB_MAG' in df_all.columns:
+            mag_99_mask |= (df_all['AB_MAG'] == 99.0)
+            mag_99_mask |= (~np.isfinite(df_all['AB_MAG']))
+        if 'AB_MAG_ERR' in df_all.columns:
+            mag_99_mask |= (df_all['AB_MAG_ERR'] == 99.0)
 
-            # Per-band sheets
-            for band, df in band_dfs.items():
-                if not df.empty:
-                    sheet = f"Band_{band}"[:31]  # Excel 31-char limit
-                    df.to_excel(writer, sheet_name=sheet, index=False)
+        sss_dropped = int(mag_99_mask.sum())
+        if sss_dropped > 0:
+            # Save the dropped rows for diagnostic
+            dropped = df_all.loc[mag_99_mask].copy()
+            dropped_path = os.path.join(save_path, "final_sss_dropped.txt")
+            dropped.to_csv(dropped_path, sep='\t', index=False)
+            print(f"\n  Final SSS filter: dropped {sss_dropped} rows (AB_MAG=99)")
+            print(f"  Dropped rows saved: {dropped_path}")
+            df_all = df_all.loc[~mag_99_mask].reset_index(drop=True)
 
-            # Summary sheet
-            summary_rows = []
-            if not df_all.empty:
-                summary_rows.append(
-                    ["Total observations (all bands)", len(df_all)]
-                )
-                summary_rows.append(
-                    ["Unique OBSIDs", df_all["OBSID"].nunique()]
-                )
-                # Use MET (Mission Elapsed Time) for time range if available
-                if "MET" in df_all.columns:
-                    met_min = df_all["MET"].min()
-                    met_max = df_all["MET"].max()
-                    # Convert MET to MJD for readability
-                    mjd_min = met_min / 86400.0 + 51910.0
-                    mjd_max = met_max / 86400.0 + 51910.0
-                    summary_rows.append([
-                        "MJD range",
-                        f"{mjd_min:.2f} to {mjd_max:.2f}"
-                    ])
+        # Same filter on per-band tables
+        for band in list(band_dfs.keys()):
+            band_df = band_dfs[band]
+            if band_df.empty:
+                continue
+            band_mask = pd.Series(False, index=band_df.index)
+            if 'AB_MAG' in band_df.columns:
+                band_mask |= (band_df['AB_MAG'] == 99.0)
+                band_mask |= (~np.isfinite(band_df['AB_MAG']))
+            if 'AB_MAG_ERR' in band_df.columns:
+                band_mask |= (band_df['AB_MAG_ERR'] == 99.0)
+            band_dfs[band] = band_df.loc[~band_mask].reset_index(drop=True)
 
-            for band, df in band_dfs.items():
-                if not df.empty:
-                    summary_rows.append([f"Observations in {band}", len(df)])
+    #######################################################################
+    # WRITE TAB-SEPARATED .TXT (universal output for code)
+    # Also  I want a comma-separated .csv if WRITE_CSV_COPY is True
+    # (human-readable for visual inspection)
+    #######################################################################
+    if not df_all.empty:
+        txt_path = os.path.join(save_path, "master_photometry.txt")
+        df_all.to_csv(txt_path, sep='\t', index=False)
+        print(f"  Master photometry saved: {txt_path}")
+        print(f"    Rows: {len(df_all)}, Columns: {len(df_all.columns)}")
+        print(f"    Unique OBSIDs: {df_all['OBSID'].nunique()}")
+        if sss_dropped > 0:
+            print(f"    Dropped from final output: {sss_dropped} (SSS = AB_MAG=99)")
 
-            if summary_rows:
-                pd.DataFrame(summary_rows, columns=["Metric", "Value"]).to_excel(
-                    writer, sheet_name="Summary", index=False
-                )
+        # Optional human-readable CSV copy
+        if WRITE_CSV_COPY:
+            csv_path = os.path.join(save_path, "master_photometry.csv")
+            df_all.to_csv(csv_path, index=False)
+            print(f"  CSV copy saved (human-inspection): {csv_path}")
+    else:
+        print("\n  WARNING: No photometry to write.")
 
-        print(f" Excel workbook saved: {excel_path}")
-
-    except Exception as e:
-        print(f"Error writing Excel file: {e}")
 
     #################################################################################
     # Return
@@ -3501,6 +4508,13 @@ def generate_best_background(base_path, save_path, target_ra, target_dec, bkg_ra
             obs_files.append((obsid, band, image_path, exp_path))
 
     print(f"  Found {len(obs_files)} observation/band combinations to check")
+
+    for i, (obsid, band, image_path, exp_path) in enumerate(obs_files[:3]):
+        print(f" [{i}] obsid={obsid} band={band}")
+        print(f" image_path: {image_path}")
+        print(f" exp_path: {exp_path}")
+        print(f" image exists: {os.path.exists(image_path)}")
+        print(f" exp exists: {os.path.exists(exp_path)}")
 
     if not obs_files:
         print("WARNING: No observation files with exposure maps found.")
@@ -4471,15 +5485,35 @@ def setup_data_directories():
     print("=" * 70)
 
     # Ask if they have existing data
-    print("\nDo you have SWIFT data already downloaded?")
-    print("  1. Yes - I have existing data")
-    print("  2. No - I need to download new data")
+    print("\nHow would you like to provide data?")
+    print("  1. Yes - I have existing data already downloaded")
+    print("  2. No - I want to download data for one new target")
+    print("  3. BATCH - I have a CSV/TXT list of targets to download and process")
+    print()
+    print(" [Batch input file format]")
+    print(" The file must have a header row with these columns")
+    print(" (case-insensitive; multiple alias names accepted):")
+    print(" Target    (or: Name, Source, Source_Name, Object)")
+    print(" RA        (or: RA_deg, RA_obj, Right_Ascension)   in degrees")
+    print(" Dec       (or: De, Dec_deg, De_obj, Declination)  in degrees")
+    print(" Radius    (or: Search_Radius, R)  in degrees [OPTIONAL]")
+    print(f" If no Radius column is given, {DEFAULT_SEARCH_RADIUS} deg is used.")
+    print(" 3' will taget only observation directly targeting your source, while above 3' adds nearby targets")
+    print(" with 15' you will begin adding targets where the source is on the edge with 17' being the whole FOV of the instrument.")
+    print(" .csv = comma-separated, .txt = tab-separated. Auto-detected.")
 
     while True:
-        choice = input("\nEnter your choice (1 or 2): ").strip()
-        if choice in ['1', '2']:
+        choice = input("\nEnter your choice (1, 2, or 3): ").strip()
+        if choice in ['1', '2', '3']:
             break
-        print("Invalid choice. Please enter 1 or 2.")
+        print("Invalid choice.")
+
+    # Handle batch mode by short-circuiting into the batch runner
+    if choice == '3':
+        print("\n--- BATCH MODE ---")
+        print("Switching to batch processing...")
+        # Return special flag so run_uvot_pipeline knows to call the batch runner
+        return {'_batch_mode': True}
 
     # Initialize Tkinter for file dialogs
     root = tk.Tk()
@@ -4796,18 +5830,17 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
             traceback.print_exc()
     
     
-    # 2. DETECT SMEARED FRAMES
+    # 2. SMEAR DETECTION (per-extension)
     if not automation_mode:
         print("\n=== Detecting Smeared Frames ===")
     try:
-        smeared_list = detect_smeared_frames(base_path)
+        smeared_list, smeared_extensions = detect_smeared_frames(base_path)
         results['smeared_list'] = smeared_list
-        
-        if not automation_mode:
-            print(f" Found {len(smeared_list) if smeared_list else 0} smeared frames")
+        results['smeared_extensions'] = smeared_extensions
     except Exception as e:
-        print(f" Smeared frame detection failed: {e}")
+        print(f" Smear detection failed: {e}")
         results['smeared_list'] = []
+        results['smeared_extensions'] = []
     
     # 3. RUN IAC
     if not automation_mode:
@@ -4828,17 +5861,19 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
         if not automation_mode:
             print("⚠️ IAC automation failed to generate data.")
     else:
-        # 3.5. POPULATE OBSERVATIONS TABLE
         if not automation_mode:
             print("\n=== Populating Observations Table ===")
-        
+            
+        # 3.5. POPULATE OBSERVATIONS TABLE
         try:
             obs_table = populate_observations_table(base_path, all_frames, summary)
-            
-            # Update smeared flags
-            if results['smeared_list']:
-                obs_table = update_smeared_flags(obs_table, results['smeared_list'])
-            
+            # Apply both wholesale-obs and per-extension smearing flags
+            if results['smeared_list'] or results.get('smeared_extensions'):
+                obs_table = update_smeared_flags(
+                    obs_table,
+                    results['smeared_list'],
+                    results.get('smeared_extensions', []),
+                )
             results['observations_table'] = obs_table
             
             # Save table to CSV
@@ -4853,6 +5888,8 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
             print(f" Failed to populate observations table: {e}")
             import traceback
             traceback.print_exc()
+
+        
         # 4. SOLVE ORPHAN FRAMES
         if not automation_mode:
             print("\n=== Solving Orphan Frames ===")
@@ -4884,6 +5921,89 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
         # Return all data for downstream processing
         return results
 
-######################################################################################################################################## End of Clean up
+
+
+######################################
+def _run_quarantine(data_dir, obs_table):
+    """
+    Helper that does Step 3.5 quarantine work. This is needed for the batch
+    as there is no quaratine work in the normal pipeline for it call, that was done local.
+    Moves orphan and fully-NONE observations to subdirectories.
+    """
+    BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+    not_aspcorr_dir = os.path.join(data_dir, "NotASPCORR")
+    orphans_dir = os.path.join(data_dir, "Orphans")
+    os.makedirs(not_aspcorr_dir, exist_ok=True)
+    os.makedirs(orphans_dir, exist_ok=True)
+    QUARANTINE_FOLDERS = {"Smeared", "NotASPCORR", "Orphans"}
+    obsid_pattern = re.compile(r"(\d{11})")
+
+    orphan_obsids = set()
+    if obs_table is not None:
+        orphan_mask = pd.Series(False, index=obs_table.index)
+        if 'Group_Status' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_Status'] == 'ORPHAN')
+            orphan_mask |= (obs_table['Group_Status'] == 'UNKNOWN')
+        if 'Group_ID' in obs_table.columns:
+            orphan_mask |= (obs_table['Group_ID'] == -1)
+        orphan_obsids = set(obs_table.loc[orphan_mask, 'ObsID'].astype(str).unique())
+
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+
+    for folder in top_folders:
+        m = obsid_pattern.search(folder)
+        if not m:
+            continue
+        obsid = m.group(1)
+        if obsid in orphan_obsids:
+            folder_path = os.path.join(data_dir, folder)
+            dest = os.path.join(orphans_dir, folder)
+            if not os.path.exists(dest):
+                try:
+                    shutil.move(folder_path, dest)
+                except Exception:
+                    pass
+
+    # Move fully-uncorrected
+    top_folders = [f for f in os.listdir(data_dir)
+                   if os.path.isdir(os.path.join(data_dir, f))
+                   and f not in QUARANTINE_FOLDERS]
+    for folder in top_folders:
+        m = obsid_pattern.search(folder)
+        if not m:
+            continue
+        folder_path = os.path.join(data_dir, folder)
+        has_any_correction = False
+        found_any_sk = False
+        for root_d, _, fnames in os.walk(folder_path):
+            for fname in fnames:
+                if "_sk.img" not in fname or not any(b in fname for b in BANDS):
+                    continue
+                found_any_sk = True
+                try:
+                    with fits.open(os.path.join(root_d, fname)) as hdul:
+                        for hdu in hdul:
+                            if hdu.header.get('NAXIS', 0) < 2:
+                                continue
+                            v = str(hdu.header.get("ASPCORR", "NONE")).strip().upper()
+                            if v in ("DIRECT", "UNICORR"):
+                                has_any_correction = True
+                                break
+                    if has_any_correction:
+                        break
+                except Exception:
+                    continue
+            if has_any_correction:
+                break
+        if not found_any_sk or has_any_correction:
+            continue
+        dest = os.path.join(not_aspcorr_dir, folder)
+        if not os.path.exists(dest):
+            try:
+                shutil.move(folder_path, dest)
+            except Exception:
+                pass
 
 
