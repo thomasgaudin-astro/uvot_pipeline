@@ -11,7 +11,17 @@ def run_uvot_pipeline(manual_aspect_correction=False):
     # STEP 1: SETUP DATA DIRECTORIES
     setup = setup_data_directories()
     if setup is None:
-        print("\n❌ Setup cancelled.")
+        print("\n ❌ Setup cancelled.")
+        return
+
+    # Check for batch mode short-circuit
+    if setup.get('_batch_mode'):
+        print("\nHanding off to batch runner...")
+        run_batch_pipeline(
+            batch_file=None,        # Will prompt
+            parent_dir=None,        # Will prompt
+            manual_aspect_correction=manual_aspect_correction,
+        )
         return
 
     data_dir = setup['data_directory']
@@ -47,7 +57,23 @@ def run_uvot_pipeline(manual_aspect_correction=False):
         save_path=save_dir,
         manual_mode=manual_aspect_correction,
     )
- 
+
+
+    ####################################################################
+    # Step 3.4: Orphan rescue (synthetic reference correction)
+    # Build deep synthetic reference per (group, band), retry uvotunicorr
+    # on orphan frames against the synthetic. Must run BEFORE quarantine
+    # so any successfully-rescued orphans avoid being moved out.
+
+    print("\n[PIPELINE STEP 3.4] Running orphan rescue...")
+    orphan_solutions = results.get('orphan_solutions')
+    obs_table = rescue_orphan_frames(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        orphan_solutions=orphan_solutions,
+        manual_mode=manual_aspect_correction,
+    )
  
     ####################################################################
     # STEP 3.5: QUARANTINE UNUSABLE OBSERVATIONS
@@ -230,7 +256,23 @@ def run_uvot_pipeline(manual_aspect_correction=False):
     print(f"  Remaining observations       : {len(remaining_folders)}")
     print(f"  (Partial corrections handled by uvotimsum exclude)")
     print(f"{'─' * 70}")
- 
+
+    #################################################################################
+    # Step 3.6: Pre-summation SSS check
+    # Runs uvotsource on individual extensions of multi-ext observations
+    # to flag any extension where the source lands on a bad pixel
+    # (AB_MAG=99). These flagged extensions get added to uvotimsum's
+    # exclude list during Step 4 summation.
+    
+    print("\n[PIPELINE STEP 3.6] Running pre-summation SSS check...")
+    obs_table = check_sss_before_summation(
+        obs_table=obs_table,
+        base_path=data_dir,
+        save_path=save_dir,
+        target_ra=target_ra,
+        target_dec=target_dec,
+    )
+    
     #################################################################################
     # STEP 4: PHOTOMETRY EXTRACTION  (summation -> uvotsource -> master data)
 
@@ -270,3 +312,265 @@ def run_uvot_pipeline(manual_aspect_correction=False):
     print("  - master_photometry.csv")
     print("  - UVOT_Data_Analysis.xlsx")
     print("=" * 70)
+
+
+
+
+
+
+
+def run_batch_pipeline(batch_file=None, parent_dir=None,
+                       manual_aspect_correction=False):
+    """
+    Batch mode: read a list of targets from a CSV/TXT file, download
+    SWIFT data for each, then run the full pipeline on each target
+    sequentially.
+
+    Per-target folder layout:
+      parent_dir/
+        Target_Name_1/
+          (data + Steps 2-4 outputs)
+        Target_Name_2/
+          ...
+
+    If a target's pipeline step fails, that target is logged and the
+    batch continues with the next target.
+
+    Returns a summary DataFrame of per-target outcomes.
+    """
+    if batch_file is None:
+        print("Select your batch input file (CSV or TXT)...")
+        root = tk.Tk(); root.withdraw()
+        batch_file = filedialog.askopenfilename(
+            title="Select batch target list",
+            filetypes=[("CSV/TXT", "*.csv *.txt"), ("All", "*.*")]
+        )
+        if not batch_file:
+            print("No batch file selected. Aborting.")
+            return None
+
+    print(f"\nLoading batch file: {batch_file}")
+    targets_df = load_batch_targets(batch_file)
+    if targets_df is None or targets_df.empty:
+        return None
+
+    print(f"\nLoaded {len(targets_df)} target(s):")
+    print(targets_df.to_string(index=False))
+
+    if parent_dir is None:
+        print("\nSelect a PARENT directory where all target folders will go...")
+        root = tk.Tk(); root.withdraw()
+        parent_dir = filedialog.askdirectory(
+            title="Select parent directory for batch download"
+        )
+        if not parent_dir:
+            print("No parent directory selected. Aborting.")
+            return None
+
+    os.makedirs(parent_dir, exist_ok=True)
+    print(f"\nParent directory: {parent_dir}")
+    print(f"Per-target folders will be created as: {parent_dir}/<Target>/")
+
+    # Per-target outcomes
+    outcomes = []
+    batch_start = time.time()
+
+# Use tqdm to show a clean overall progress bar
+    target_iter = tqdm(
+        list(targets_df.iterrows()),
+        desc="Batch progress",
+        unit="target",
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    )
+
+    for i, row in target_iter:
+        target_name = row['Target']
+        target_ra = float(row['RA'])
+        target_dec = float(row['Dec'])
+        radius = float(row['Radius'])
+
+        target_dir = os.path.join(parent_dir, target_name)
+        os.makedirs(target_dir, exist_ok=True)
+        log_path = os.path.join(target_dir, "pipeline.log")
+
+        # Compact status line for this target — shown above the progress bar
+        target_iter.set_description(f"Target {i+1}/{len(targets_df)}: {target_name}")
+        target_iter.write(f"\n[{target_name}] RA={target_ra}, Dec={target_dec}, "
+                          f"R={radius}° — log: {log_path}")
+
+        target_start = time.time()
+        outcome = {
+            'Target': target_name,
+            'RA': target_ra,
+            'Dec': target_dec,
+            'Radius': radius,
+            'Folder': target_dir,
+            'Downloaded': 0,
+            'Pipeline_Status': 'NOT_STARTED',
+            'Error': '',
+            'Runtime_min': 0,
+        }
+
+        # --- DOWNLOAD (silenced) ---
+        stage_start = time.time()
+        target_iter.write(f"  [{target_name}] Stage 1/6: Downloading from Swift archive...")
+        try:
+            with _silenced_to_logfile(log_path):
+                query = ObsQuery(ra=str(target_ra), dec=str(target_dec), radius=radius)
+                total_obs = len(query)
+                if total_obs > 0:
+                    for j, q in enumerate(query, start=1):
+                        start_time_str = str(q.begin).replace(":", "-").replace(" ", "_")
+                        obs_dir = os.path.join(target_dir, f"{q.obsid}_{start_time_str}")
+                        os.makedirs(obs_dir, exist_ok=True)
+                        if os.listdir(obs_dir):
+                            continue
+                        try:
+                            Data(obsid=q.obsid, uvot=True, clobber=True, outdir=obs_dir)
+                            outcome['Downloaded'] += 1
+                        except Exception:
+                            pass
+
+            target_iter.write(f"  [{target_name}] Downloaded {outcome['Downloaded']} obs "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+            if total_obs == 0:
+                outcome['Pipeline_Status'] = 'NO_DATA'
+                outcome['Runtime_min'] = (time.time() - target_start) / 60.0
+                outcomes.append(outcome)
+                target_iter.write(f"  [{target_name}] No data found — skipping pipeline")
+                continue
+        except Exception as e:
+            outcome['Pipeline_Status'] = 'DOWNLOAD_FAILED'
+            outcome['Error'] = str(e)[:300]
+            outcome['Runtime_min'] = (time.time() - target_start) / 60.0
+            outcomes.append(outcome)
+            target_iter.write(f"  [{target_name}] DOWNLOAD FAILED — see log")
+            continue
+
+        # --- PIPELINE STAGES (each silenced, status reported between) ---
+        try:
+            # Step 2: cleanup
+            stage_start = time.time()
+            target_iter.write(f"  [{target_name}] Stage 2/6: Data cleanup (uvotdetect, smear)...")
+            with _silenced_to_logfile(log_path):
+                # Append to log instead of overwriting from here on
+                pass
+            # Re-open log in append mode for subsequent stages
+            with open(log_path, 'a', encoding='utf-8') as _:
+                pass
+            # Use append-mode silencer for all remaining stages
+            with _silenced_append(log_path):
+                results = clean_up_data(
+                    automation_mode=True,
+                    base_path=target_dir,
+                    save_path=target_dir,
+                )
+            if results is None or results["observations_table"] is None:
+                outcome['Pipeline_Status'] = 'CLEANUP_FAILED'
+                outcome['Runtime_min'] = (time.time() - target_start) / 60.0
+                outcomes.append(outcome)
+                target_iter.write(f"  [{target_name}] CLEANUP FAILED — see log")
+                continue
+            obs_table = results["observations_table"]
+            target_iter.write(f"  [{target_name}]    cleanup done "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+
+            # Step 3: aspect correction
+            stage_start = time.time()
+            target_iter.write(f"  [{target_name}] Stage 3/6: Aspect correction...")
+            with _silenced_append(log_path):
+                automated_aspect_correction(
+                    obs_table=obs_table,
+                    base_path=target_dir,
+                    save_path=target_dir,
+                    manual_mode=manual_aspect_correction,
+                )
+            target_iter.write(f"  [{target_name}]    aspect correction done "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+
+            # Step 3.4: orphan rescue
+            stage_start = time.time()
+            target_iter.write(f"  [{target_name}] Stage 4/6: Orphan rescue...")
+            orphan_solutions = results.get('orphan_solutions')
+            with _silenced_append(log_path):
+                obs_table = rescue_orphan_frames(
+                    obs_table=obs_table,
+                    base_path=target_dir,
+                    save_path=target_dir,
+                    orphan_solutions=orphan_solutions,
+                    manual_mode=manual_aspect_correction,
+                )
+            target_iter.write(f"  [{target_name}]    orphan rescue done "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+
+            # Step 3.5 quarantine + 3.6 SSS check
+            stage_start = time.time()
+            target_iter.write(f"  [{target_name}] Stage 5/6: Quarantine + SSS check...")
+            with _silenced_append(log_path):
+                _run_quarantine(target_dir, obs_table)
+                obs_table = check_sss_before_summation(
+                    obs_table=obs_table,
+                    base_path=target_dir,
+                    save_path=target_dir,
+                    target_ra=target_ra,
+                    target_dec=target_dec,
+                )
+            target_iter.write(f"  [{target_name}]    quarantine + SSS done "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+
+            # Step 4: photometry
+            stage_start = time.time()
+            target_iter.write(f"  [{target_name}] Stage 6/6: Photometry extraction...")
+            with _silenced_append(log_path):
+                run_uvotsource_pipeline(
+                    obs_table=obs_table,
+                    base_path=target_dir,
+                    save_path=target_dir,
+                    source_reg=None,
+                    bkg_reg=None,
+                    target_ra=target_ra,
+                    target_dec=target_dec,
+                    automation_mode=False,
+                )
+            target_iter.write(f"  [{target_name}]    photometry done "
+                              f"({(time.time()-stage_start)/60:.1f} min)")
+
+            outcome['Pipeline_Status'] = 'SUCCESS'
+
+        except Exception as e:
+            outcome['Pipeline_Status'] = 'PIPELINE_FAILED'
+            outcome['Error'] = str(e)[:300]
+            target_iter.write(f"  [{target_name}] PIPELINE FAILED: {e} — see log")
+
+        outcome['Runtime_min'] = (time.time() - target_start) / 60.0
+        outcomes.append(outcome)
+
+        target_iter.write(
+            f"  [{target_name}] FINISHED in {outcome['Runtime_min']:.1f} min "
+            f"[{outcome['Pipeline_Status']}]"
+        )
+
+    target_iter.close()
+
+    print(f"\n  Target {target_name} finished in "
+              f"{outcome['Runtime_min']:.1f} min "
+              f"[{outcome['Pipeline_Status']}]")
+
+    # Save batch summary
+    summary_df = pd.DataFrame(outcomes)
+    summary_path = os.path.join(parent_dir, "batch_summary.csv")
+    summary_df.to_csv(summary_path, index=False)
+
+    batch_runtime = (time.time() - batch_start) / 60.0
+
+    print("\n" + "=" * 70)
+    print("BATCH RUN COMPLETE")
+    print("=" * 70)
+    print(f"Total runtime: {batch_runtime:.1f} min")
+    print(f"Targets attempted: {len(targets_df)}")
+    print(f"Successful: {(summary_df['Pipeline_Status'] == 'SUCCESS').sum()}")
+    print(f"Failed:     {(summary_df['Pipeline_Status'] != 'SUCCESS').sum()}")
+    print(f"Summary saved: {summary_path}")
+    print("=" * 70)
+
+    return summary_df
