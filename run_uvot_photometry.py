@@ -16,11 +16,13 @@ def run_uvot_pipeline(manual_aspect_correction=False):
 
     # Check for batch mode short-circuit
     if setup.get('_batch_mode'):
-        print("\nHanding off to batch runner...")
+        batch_mode_type = setup.get('_batch_mode_type', 'full')
+        print(f"\nHanding off to batch runner (mode: {batch_mode_type})...")
         run_batch_pipeline(
             batch_file=None,        # Will prompt
             parent_dir=None,        # Will prompt
             manual_aspect_correction=manual_aspect_correction,
+            mode=batch_mode_type,
         )
         return
 
@@ -318,26 +320,58 @@ def run_uvot_pipeline(manual_aspect_correction=False):
 
 
 
+def _obsid_has_uvot_data(obs_dir):
+    """
+    Check if an obsid folder has at least one UVOT sky image.
+    Used by the batch downloader to detect partial/interrupted downloads
+    and missing data, so they can be re-downloaded.
+
+    Returns True if the folder has a valid-looking UVOT image dir with
+    at least one _sk.img or _sk.img.gz file, False otherwise.
+    """
+    if not os.path.isdir(obs_dir):
+        return False
+    for root, dirs, files in os.walk(obs_dir):
+        # Look for {obsid}/uvot/image/ subfolder
+        norm = root.replace("\\", "/")
+        if not norm.endswith("/uvot/image"):
+            continue
+        # Must have at least one sky image file
+        for f in files:
+            if f.endswith("_sk.img.gz") or f.endswith("_sk.img"):
+                return True
+    return False
+
 
 def run_batch_pipeline(batch_file=None, parent_dir=None,
-                       manual_aspect_correction=False):
+                       manual_aspect_correction=False,
+                       mode='full'):
     """
-    Batch mode: read a list of targets from a CSV/TXT file, download
-    SWIFT data for each, then run the full pipeline on each target
-    sequentially.
+    Batch mode: read a list of targets from a CSV/TXT file, then either
+    download Swift data, run the pipeline, or both.
 
-    Per-target folder layout:
+    mode controls behavior:
+      'full'         - download AND run pipeline on each target (default)
+      'download'     - download only; user can process later
+      'process'      - skip download, assume data already exists; just process
+
+    For 'process' mode: parent_dir must contain subfolders named exactly
+    as each target's sanitized name from the CSV. e.g. for target
+    '4FGL J0004.4-4001' the folder must be 'parent_dir/4FGL_J0004.4-4001/'.
+
+    Per-target folder layout (matches what 'download' mode creates):
       parent_dir/
         Target_Name_1/
           (data + Steps 2-4 outputs)
         Target_Name_2/
           ...
 
-    If a target's pipeline step fails, that target is logged and the
-    batch continues with the next target.
-
     Returns a summary DataFrame of per-target outcomes.
     """
+    if mode not in ('full', 'download', 'process'):
+        print(f"ERROR: Invalid mode '{mode}'. Use 'full', 'download', or 'process'.")
+        return None
+
     if batch_file is None:
         print("Select your batch input file (CSV or TXT)...")
         root = tk.Tk(); root.withdraw()
@@ -357,25 +391,49 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
     print(f"\nLoaded {len(targets_df)} target(s):")
     print(targets_df.to_string(index=False))
 
+    # Different prompt depending on mode
+    if mode == 'process':
+        prompt = ("Select the PARENT directory where each target's folder lives "
+                  "(subfolders must be named exactly like the Target column)...")
+    elif mode == 'download':
+        prompt = "Select the PARENT directory for batch download..."
+    else:
+        prompt = "Select a PARENT directory where all target folders will go..."
+
     if parent_dir is None:
-        print("\nSelect a PARENT directory where all target folders will go...")
+        print(f"\n{prompt}")
         root = tk.Tk(); root.withdraw()
-        parent_dir = filedialog.askdirectory(
-            title="Select parent directory for batch download"
-        )
+        parent_dir = filedialog.askdirectory(title=prompt)
         if not parent_dir:
             print("No parent directory selected. Aborting.")
             return None
 
     os.makedirs(parent_dir, exist_ok=True)
     print(f"\nParent directory: {parent_dir}")
-    print(f"Per-target folders will be created as: {parent_dir}/<Target>/")
+    print(f"Per-target folders expected at: {parent_dir}/<Target>/")
+    print(f"Mode: {mode}")
 
-    # Per-target outcomes
+    # If process-only, sanity-check that the expected subfolders exist
+    if mode == 'process':
+        missing = []
+        for _, row in targets_df.iterrows():
+            tgt = row['Target']
+            tdir = os.path.join(parent_dir, tgt)
+            if not os.path.isdir(tdir):
+                missing.append(tgt)
+        if missing:
+            print(f"\nERROR: Missing subfolders for {len(missing)} target(s):")
+            for m in missing:
+                print(f"  - {os.path.join(parent_dir, m)}")
+            print(f"\nProcess-only mode requires existing subfolders. Aborting.")
+            return None
+        print(f"All {len(targets_df)} target folders found.")
+
+    # Track per-target outcomes
     outcomes = []
     batch_start = time.time()
 
-# Use tqdm to show a clean overall progress bar
+    # Use tqdm for a clean overall progress bar
     target_iter = tqdm(
         list(targets_df.iterrows()),
         desc="Batch progress",
@@ -388,15 +446,18 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
         target_ra = float(row['RA'])
         target_dec = float(row['Dec'])
         radius = float(row['Radius'])
+        target_threshold = float(row.get('Threshold', DEFAULT_DETECT_THRESHOLD))
 
         target_dir = os.path.join(parent_dir, target_name)
         os.makedirs(target_dir, exist_ok=True)
         log_path = os.path.join(target_dir, "pipeline.log")
 
-        # Compact status line for this target — shown above the progress bar
         target_iter.set_description(f"Target {i+1}/{len(targets_df)}: {target_name}")
         target_iter.write(f"\n[{target_name}] RA={target_ra}, Dec={target_dec}, "
                           f"R={radius}° — log: {log_path}")
+        target_iter.write(f"  [{target_name}] Mode: {mode}")
+        if mode != 'download':
+            target_iter.write(f" [{target_name}] Detect threshold: {target_threshold}")
 
         target_start = time.time()
         outcome = {
@@ -404,80 +465,103 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
             'RA': target_ra,
             'Dec': target_dec,
             'Radius': radius,
+            'Threshold': target_threshold,
             'Folder': target_dir,
+            'Mode': mode,
             'Downloaded': 0,
             'Pipeline_Status': 'NOT_STARTED',
             'Error': '',
             'Runtime_min': 0,
         }
 
-        # --- DOWNLOAD (silenced) ---
-        stage_start = time.time()
-        target_iter.write(f"  [{target_name}] Stage 1/6: Downloading from Swift archive...")
-        try:
-            with _silenced_to_logfile(log_path):
-                query = ObsQuery(ra=str(target_ra), dec=str(target_dec), radius=radius)
-                total_obs = len(query)
-                if total_obs > 0:
-                    for j, q in enumerate(query, start=1):
-                        start_time_str = str(q.begin).replace(":", "-").replace(" ", "_")
-                        obs_dir = os.path.join(target_dir, f"{q.obsid}_{start_time_str}")
-                        os.makedirs(obs_dir, exist_ok=True)
-                        if os.listdir(obs_dir):
-                            continue
-                        try:
-                            Data(obsid=q.obsid, uvot=True, clobber=True, outdir=obs_dir)
-                            outcome['Downloaded'] += 1
-                        except Exception:
-                            pass
+        # --- DOWNLOAD (skipped in process-only mode) ---
+        if mode in ('full', 'download'):
+            stage_start = time.time()
+            target_iter.write(f" [{target_name}] Stage 1/6: Downloading from Swift archive...")
+            try:
+                with _silenced_to_logfile(log_path):
+                    query = ObsQuery(ra=str(target_ra), dec=str(target_dec), radius=radius)
+                    total_obs = len(query)
+                    skipped_existing = 0
+                    redownloaded_partial = 0
+                    if total_obs > 0:
+                        for j, q in enumerate(query, start=1):
+                            start_time_str = str(q.begin).replace(":", "-").replace(" ", "_")
+                            obs_dir = os.path.join(target_dir, f"{q.obsid}_{start_time_str}")
+                            os.makedirs(obs_dir, exist_ok=True)
 
-            target_iter.write(f"  [{target_name}] Downloaded {outcome['Downloaded']} obs "
-                              f"({(time.time()-stage_start)/60:.1f} min)")
-            if total_obs == 0:
-                outcome['Pipeline_Status'] = 'NO_DATA'
+                            # Skip only if obs has actual UVOT sky image data.
+                            # Folder existing isn't enough, partial downloads
+                            # or missing files trigger re-download.
+                            if _obsid_has_uvot_data(obs_dir):
+                                skipped_existing += 1
+                                continue
+
+                            # Re-download if folder existed but had no good data
+                            if os.listdir(obs_dir):
+                                redownloaded_partial += 1
+
+                            try:
+                                Data(obsid=q.obsid, uvot=True, clobber=True, outdir=obs_dir)
+                                outcome['Downloaded'] += 1
+                            except Exception:
+                                pass
+
+                target_iter.write(f"  [{target_name}] Downloaded {outcome['Downloaded']} new obs "
+                                  f"({(time.time()-stage_start)/60:.1f} min)")
+                if skipped_existing:
+                    target_iter.write(f"  [{target_name}] Skipped {skipped_existing} obs (already complete)")
+                if redownloaded_partial:
+                    target_iter.write(f"  [{target_name}] Re-downloaded {redownloaded_partial} obs (missing UVOT data)")
+                if total_obs == 0:
+                    outcome['Pipeline_Status'] = 'NO_DATA'
+                    outcome['Runtime_min'] = (time.time() - target_start) / 60.0
+                    outcomes.append(outcome)
+                    target_iter.write(f"  [{target_name}] No data found — skipping")
+                    continue
+
+            except Exception as e:
+                outcome['Pipeline_Status'] = 'DOWNLOAD_FAILED'
+                outcome['Error'] = str(e)[:300]
                 outcome['Runtime_min'] = (time.time() - target_start) / 60.0
                 outcomes.append(outcome)
-                target_iter.write(f"  [{target_name}] No data found — skipping pipeline")
+                target_iter.write(f" [{target_name}] DOWNLOAD FAILED — see log")
                 continue
-        except Exception as e:
-            outcome['Pipeline_Status'] = 'DOWNLOAD_FAILED'
-            outcome['Error'] = str(e)[:300]
+
+        # If download-only mode, we're done with this target
+        if mode == 'download':
+            outcome['Pipeline_Status'] = 'DOWNLOAD_COMPLETE'
             outcome['Runtime_min'] = (time.time() - target_start) / 60.0
             outcomes.append(outcome)
-            target_iter.write(f"  [{target_name}] DOWNLOAD FAILED — see log")
+            target_iter.write(f" [{target_name}] DOWNLOAD COMPLETE in "
+                              f"{outcome['Runtime_min']:.1f} min")
             continue
 
-        # --- PIPELINE STAGES (each silenced, status reported between) ---
+        # --- PIPELINE STAGES (for 'full' and 'process' modes) ---
         try:
             # Step 2: cleanup
             stage_start = time.time()
-            target_iter.write(f"  [{target_name}] Stage 2/6: Data cleanup (uvotdetect, smear)...")
-            with _silenced_to_logfile(log_path):
-                # Append to log instead of overwriting from here on
-                pass
-            # Re-open log in append mode for subsequent stages
-            with open(log_path, 'a', encoding='utf-8') as _:
-                pass
-            # Use append-mode silencer for all remaining stages
+            target_iter.write(f" [{target_name}] Stage 2/6: Data cleanup (uvotdetect, smear)...")
             with _silenced_append(log_path):
                 results = clean_up_data(
                     automation_mode=True,
                     base_path=target_dir,
                     save_path=target_dir,
+                    detect_threshold=target_threshold,
                 )
             if results is None or results["observations_table"] is None:
                 outcome['Pipeline_Status'] = 'CLEANUP_FAILED'
                 outcome['Runtime_min'] = (time.time() - target_start) / 60.0
                 outcomes.append(outcome)
-                target_iter.write(f"  [{target_name}] CLEANUP FAILED — see log")
+                target_iter.write(f" [{target_name}] CLEANUP FAILED — see log")
                 continue
             obs_table = results["observations_table"]
-            target_iter.write(f"  [{target_name}]    cleanup done "
+            target_iter.write(f" [{target_name}]    cleanup done "
                               f"({(time.time()-stage_start)/60:.1f} min)")
 
             # Step 3: aspect correction
             stage_start = time.time()
-            target_iter.write(f"  [{target_name}] Stage 3/6: Aspect correction...")
+            target_iter.write(f" [{target_name}] Stage 3/6: Aspect correction...")
             with _silenced_append(log_path):
                 automated_aspect_correction(
                     obs_table=obs_table,
@@ -485,12 +569,12 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
                     save_path=target_dir,
                     manual_mode=manual_aspect_correction,
                 )
-            target_iter.write(f"  [{target_name}]    aspect correction done "
+            target_iter.write(f"[{target_name}] aspect correction done "
                               f"({(time.time()-stage_start)/60:.1f} min)")
 
             # Step 3.4: orphan rescue
             stage_start = time.time()
-            target_iter.write(f"  [{target_name}] Stage 4/6: Orphan rescue...")
+            target_iter.write(f"[{target_name}] Stage 4/6: Orphan rescue...")
             orphan_solutions = results.get('orphan_solutions')
             with _silenced_append(log_path):
                 obs_table = rescue_orphan_frames(
@@ -500,12 +584,12 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
                     orphan_solutions=orphan_solutions,
                     manual_mode=manual_aspect_correction,
                 )
-            target_iter.write(f"  [{target_name}]    orphan rescue done "
+            target_iter.write(f"[{target_name}] orphan rescue done "
                               f"({(time.time()-stage_start)/60:.1f} min)")
 
             # Step 3.5 quarantine + 3.6 SSS check
             stage_start = time.time()
-            target_iter.write(f"  [{target_name}] Stage 5/6: Quarantine + SSS check...")
+            target_iter.write(f"[{target_name}] Stage 5/6: Quarantine + SSS check...")
             with _silenced_append(log_path):
                 _run_quarantine(target_dir, obs_table)
                 obs_table = check_sss_before_summation(
@@ -515,12 +599,12 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
                     target_ra=target_ra,
                     target_dec=target_dec,
                 )
-            target_iter.write(f"  [{target_name}]    quarantine + SSS done "
+            target_iter.write(f"[{target_name}]  quarantine + SSS done "
                               f"({(time.time()-stage_start)/60:.1f} min)")
 
             # Step 4: photometry
             stage_start = time.time()
-            target_iter.write(f"  [{target_name}] Stage 6/6: Photometry extraction...")
+            target_iter.write(f"[{target_name}] Stage 6/6: Photometry extraction...")
             with _silenced_append(log_path):
                 run_uvotsource_pipeline(
                     obs_table=obs_table,
@@ -532,7 +616,7 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
                     target_dec=target_dec,
                     automation_mode=False,
                 )
-            target_iter.write(f"  [{target_name}]    photometry done "
+            target_iter.write(f"[{target_name}]    photometry done "
                               f"({(time.time()-stage_start)/60:.1f} min)")
 
             outcome['Pipeline_Status'] = 'SUCCESS'
@@ -540,36 +624,34 @@ def run_batch_pipeline(batch_file=None, parent_dir=None,
         except Exception as e:
             outcome['Pipeline_Status'] = 'PIPELINE_FAILED'
             outcome['Error'] = str(e)[:300]
-            target_iter.write(f"  [{target_name}] PIPELINE FAILED: {e} — see log")
+            target_iter.write(f"[{target_name}] PIPELINE FAILED: {e} — see log")
 
         outcome['Runtime_min'] = (time.time() - target_start) / 60.0
         outcomes.append(outcome)
 
         target_iter.write(
-            f"  [{target_name}] FINISHED in {outcome['Runtime_min']:.1f} min "
+            f"[{target_name}] FINISHED in {outcome['Runtime_min']:.1f} min "
             f"[{outcome['Pipeline_Status']}]"
         )
 
     target_iter.close()
 
-    print(f"\n  Target {target_name} finished in "
-              f"{outcome['Runtime_min']:.1f} min "
-              f"[{outcome['Pipeline_Status']}]")
-
     # Save batch summary
     summary_df = pd.DataFrame(outcomes)
-    summary_path = os.path.join(parent_dir, "batch_summary.csv")
+    summary_path = os.path.join(parent_dir, f"batch_summary_{mode}.csv")
     summary_df.to_csv(summary_path, index=False)
 
     batch_runtime = (time.time() - batch_start) / 60.0
 
     print("\n" + "=" * 70)
-    print("BATCH RUN COMPLETE")
+    print(f"BATCH RUN COMPLETE ({mode.upper()} MODE)")
     print("=" * 70)
     print(f"Total runtime: {batch_runtime:.1f} min")
     print(f"Targets attempted: {len(targets_df)}")
-    print(f"Successful: {(summary_df['Pipeline_Status'] == 'SUCCESS').sum()}")
-    print(f"Failed:     {(summary_df['Pipeline_Status'] != 'SUCCESS').sum()}")
+    success_count = (summary_df['Pipeline_Status'].isin(
+        ['SUCCESS', 'DOWNLOAD_COMPLETE'])).sum()
+    print(f"Successful: {int(success_count)}")
+    print(f"Failed: {len(targets_df) - int(success_count)}")
     print(f"Summary saved: {summary_path}")
     print("=" * 70)
 
