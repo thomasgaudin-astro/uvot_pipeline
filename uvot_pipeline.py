@@ -53,6 +53,11 @@ WSL_CONDA_ENV = "henv"
 #   "/home/user/heasoft/x86_64-pc-linux-gnu-libc2.31/headas-init.sh"
 WSL_HEASOFT_INIT_SCRIPT = None
 
+# Path (inside WSL) to the HEASoft wrapper script.
+# See README for setup instructions. Replace <your_wsl_user> with your
+# WSL username (find it with `whoami` in WSL).
+WSL_WRAPPER_PATH = "/home/allotheduke/run_heasoft_wrapper.sh"
+
 ###############################################################################
 # NATIVE CONFIGURATION (only used if HEASOFT_BACKEND == "native")
 ###############################################################################
@@ -127,12 +132,16 @@ class DownloadError(Exception):
 
 DEFAULT_SEARCH_RADIUS = 0.05   # degrees, used if no Radius column in input
 
+DEFAULT_DETECT_THRESHOLD = 3.0 # In sigma error, 3 is the standred to screen out noise.
+# But their might be moments for some objects where it will have to be lowered to produce outputs.
+
 # Accepted column names (case-insensitive) for each required field
 _BATCH_COL_ALIASES = {
     'target': ['target', 'name', 'source', 'source_name', 'object'],
     'ra':     ['ra', 'ra_deg', 'ra_obj', 'right_ascension'],
     'dec':    ['dec', 'de', 'dec_deg', 'de_obj', 'declination'],
     'radius': ['radius', 'search_radius', 'radius_deg', 'r'],
+    'threshold': ['threshold', 'detect_threshold', 'sigma', 'sig'],
 }
 
 
@@ -235,6 +244,13 @@ def load_batch_targets(filepath):
     else:
         out['Radius'] = DEFAULT_SEARCH_RADIUS
 
+    threshold_col = _resolve_column(df, _BATCH_COL_ALIASES['threshold'])
+    if threshold_col is not None:
+        out['Threshold'] = pd.to_numeric(df[threshold_col], errors='coerce')
+        out['Threshold'].fillna(DEFAULT_DETECT_THRESHOLD, inplace=True)
+    else:
+        out['Threshold'] = DEFAULT_DETECT_THRESHOLD
+
     # Drop any rows with invalid RA/Dec
     valid_mask = out['RA'].notna() & out['Dec'].notna()
     invalid_count = (~valid_mask).sum()
@@ -310,27 +326,17 @@ def run_heasoft_command(command):
     print(f"\n[SYSTEM]: Running HEASOFT command...")
 
     if HEASOFT_BACKEND == "wsl":
-        if WSL_CONDA_ENV:
-            # Use non-interactive bash with explicit conda init.
-            prefix = (
-                f"source ~/miniforge3/etc/profile.d/conda.sh && "
-                f"conda activate {WSL_CONDA_ENV}"
-            )
-        elif WSL_HEASOFT_INIT_SCRIPT:
-            prefix = f"source {WSL_HEASOFT_INIT_SCRIPT}"
-        else:
+        if not WSL_WRAPPER_PATH:
             raise RuntimeError(
-                "WSL backend requires WSL_CONDA_ENV or "
-                "WSL_HEASOFT_INIT_SCRIPT to be set in the config block."
+                "WSL backend requires WSL_WRAPPER_PATH to be set in the "
+                "config block. See README for wrapper setup instructions."
             )
-
-        full_cmd = f"{prefix} && {command}"
         result = subprocess.run(
-            ["wsl", "bash", "-c", full_cmd],   # -c, no -i
+            ["wsl", "bash", WSL_WRAPPER_PATH],
+            input=command,
             text=True,
             capture_output=True,
         )
-
     else:
         # Native (Linux / macOS)
         headas = NATIVE_HEADAS_PATH or os.environ.get("HEADAS")
@@ -431,68 +437,9 @@ def find_obs_file(base_path, obsid, band, file_type='sk'):
                 return os.path.join(root, target_filename)
     return None
 
-
-
-
-##
-# This isnt used anywere Else currently This is Thomas Version That I dont know how to integrate and I dont want to touch, So I dont.    
-def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
-
-    # Construct bash command
-    bash_command = f"""
-    bash -c '
-    source {os.environ['HEADAS']}/headas-init.sh
-    uvotdetect \\
-        infile={source_path} \\
-        outfile={output_path} \\
-        expfile={exposure_path} \\
-        threshold=3 \\
-        sexfile=DEFAULT \\
-        plotsrc=NO \\
-        regfile={reg_path} \\
-        zerobkg=0.03 \\
-        expopt=BETA \\
-        calibrate=YES \\
-        clobber=YES
-    '
-    """
-
-    return bash_command
-
-
-def run_uvotdetect(uvotdetect_command):
-
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotdetect_command],
-        capture_output=True,
-        text=True
-    )
-
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotdetect_verbose(uvotdetect_command):
-
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotdetect_command],
-        capture_output=True,
-        text=True
-    )
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-
-
 #WSL UVOTDETECT version, Thomas if you so desire and think my logical bellow is good and would like to use it, you can edit to the code to add
 # If WSL elements, As currently this is later called with a If WSL rather then being built in.
-def batch_run_uvotdetect(base_path):
+def batch_run_uvotdetect(base_path, threshold=3.0):
     
 # The six UVOT filter bands we care about
     BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
@@ -567,7 +514,7 @@ def batch_run_uvotdetect(base_path):
                         f"uvotdetect "
                         f"infile='{sk_filename}[{ext}]' "
                         f"outfile='{detect_ext}' "
-                        f"expfile=NONE threshold=3"
+                        f"expfile=NONE threshold={threshold} clobber=YES"
                     )
                     run_heasoft_command(uvotdetect_cmd)
             else:  # Single extensions
@@ -583,63 +530,14 @@ def batch_run_uvotdetect(base_path):
                     f"uvotdetect "
                     f"infile='{sk_filename}' "
                     f"outfile='{detect_base}' "
-                    f"expfile=NONE threshold=3"
+                    f"expfile=NONE threshold={threshold} clobber=YES"
                 )
                 run_heasoft_command(uvotdetect_cmd)
 
     print("\n UVOT Detect processing complete!")
 
 
-
-
-########################################################################### 
-def run_fkeyprint(fkeyprint_command):
-
-    result = run_heasoft_command(fkeyprint_command)
-
-    
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_fkeyprint_verbose(fkeyprint_command):
-
-    result = run_heasoft_command(fkeyprint_command)
-    
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_fappend_bash_command(file1_name, file2_name):
-
-    file11_name = prepare_path(file1_name)
-    file22_name = prepare_path(file2_name)
-
-
-    return f'fappend ="{file11_name}" outfile="{file22_name}"'
-
-def run_fappend(fappend_command):
-
-    result = run_heasoft_command(fappend_command)
-    
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_fappend_verbose(fappend_command):
-
-    result = run_heasoft_command(fappend_command)
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
 ####################################################################################
-
-
 
 
 def create_uvotunicorr_command(ref_frame, obs_frame, band, ref_snapshot,
@@ -676,235 +574,6 @@ def create_uvotunicorr_command(ref_frame, obs_frame, band, ref_snapshot,
     )
     return command
 
-
-
-
-##################################### Bellow is unicorr for MACOS 
-def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
-
-    if obspath:
-        ref_filepath = obspath+f'/sw{ref_frame}uw1_sk.img[1]'
-        obs_filepath = obspath+f'/sw{obs_frame}uw1_sk.img[1]'
-        ref_reg_filepath = obspath+'/ref.reg'
-        obs_reg_filepath = obspath+'/obs.reg'
-    else:
-        ref_filepath = f'sw{ref_frame}uw1_sk.img[1]'
-        obs_filepath = f'sw{obs_frame}uw1_sk.img[1]'
-        ref_reg_filepath = 'ref.reg'
-        obs_reg_filepath = 'obs.reg'
-    
-    bash_command = f"""
-        bash -c '
-        uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
-        '
-        """
-
-    return bash_command
-
-def create_uvotunicorr_too_bash_command(ref_frame, obs_frame, band, snapshot, obspath=None):
-
-    if obspath:
-        ref_filepath = obspath+f'/sw{ref_frame}{band}_sk.img[{snapshot}]'
-        obs_filepath = obspath+f'/sw{obs_frame}{band}_sk.img[{snapshot}]'
-        ref_reg_filepath = obspath+'/ref.reg'
-        obs_reg_filepath = obspath+'/obs.reg'
-    else:
-        ref_filepath = f'sw{ref_frame}{band}_sk.img[{snapshot}]'
-        obs_filepath = f'sw{obs_frame}{band}_sk.img[{snapshot}]'
-        ref_reg_filepath = 'ref.reg'
-        obs_reg_filepath = 'obs.reg'
-    
-    bash_command = f"""
-        bash -c '
-        uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
-        '
-        """
-
-    return bash_command
-
-def run_uvotunicorr(uvotunicorr_command):
-
-    run_heasoft_command(uvotunicorr_command)
-
-
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotunicorr_verbose(uvotunicorr_command):
-
-    run_heasoft_command(uvotunicorr_command)
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None, ref_frame=False):
-    
-    infile_path = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
-
-    if ref_frame == True:
-        outfile_path = f'./{source_name}/Ref_Frames/{obsid}_{band}_summed.fits'
-    else:
-        if file_type == 'sk':
-            outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
-        
-        elif file_type == 'ex':
-            outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
-    
-    if exclude == None:
-        bash_command = f"""
-            bash -c '
-            uvotimsum infile="{infile_path}" outfile="{outfile_path}"
-            '
-            """
-    else:
-        bash_command = f"""
-            bash -c '
-            uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude={exclude}
-            '
-            """
-
-    return bash_command
-
-def create_uvotimsum_master_ref_bash_command(source_name, group_name):
-
-    infile_path = f'./{source_name}/Ref_Frames/{group_name}_summed.fits'
-    outfile_path = f'./{source_name}/Ref_Frames/{group_name}_master.fits'
-
-    bash_command = f"""
-            bash -c '
-            uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude=0
-            '
-            """
-
-    return bash_command
-
-def run_uvotimsum(uvotimsum_command):
-    # Capture the return value here:
-    result = run_heasoft_command(uvotimsum_command) 
-    return result.stdout
-
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotimsum_verbose(uvotimsum_command):
-
-    run_heasoft_command(uvotimsum_command)
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
-
-    trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
-    obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img'
-    exp_filepath  = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_ex.img.gz'
-    
-    bash_command = f"""
-        bash -c '
-        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath + target_name}_source.fits" cleanup=YES clobber=YES chatter=1
-
-        '
-        """
-
-    return bash_command
-
-def create_uvotsource_too_bash_command(source_name, obsid, band, snapshot, source_reg_file, bkg_reg_file):
-
-    trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
-    obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
-    exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
-
-    if snapshot == 1:
-    
-        bash_command = f"""
-            bash -c '
-            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
-
-            '
-            """
-    else:
-        bash_command = f"""
-            bash -c '
-            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source{snapshot}.fits" cleanup=YES clobber=YES chatter=1
-
-            '
-            """
-
-    return bash_command
-
-def create_uvotsource_summed_bash_command(source_name, obsid, band, source_reg_file, bkg_reg_file):
-
-    trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
-    obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
-    exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
-    
-    bash_command = f"""
-        bash -c '
-        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
-
-        '
-        """
-def create_uvotimsum_command(infile, outfile):
-    return f'uvotimsum infile="{infile}" outfile="{outfile}"'
-
-    return bash_command
-
-def run_uvotsource(uvotsource_command):
-
-    run_heasoft_command(uvotsource_command)
-
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotsource_verbose(uvotsource_command):
-
-    run_heasoft_command(uvotsource_command)
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def check_for_undownloaded_files(tile_name, new_tile_name, tile_ra, tile_dec):
-
-    undownloaded_files = []
-
-    #Run ObsQuery for all files in the region of the sky that we are interested in
-    query = ObsQuery(ra=tile_ra, dec=tile_dec, radius = 0.18)
-
-    #loop through all queried observations
-    #only check observations where file name is desired S-CUBED tile
-    #if directory doesn't exist for observation, append to undownloaded files  
-    for ind, q in enumerate(query):
-        if (q.targname == new_tile_name) & (q.exposure.total_seconds() > 30):
-            obsid = query[ind].obsid
-            dirpath = f'./S-CUBED/{tile_name}/UVOT/{obsid}'
-            smeared_dirpath = f'./S-CUBED/{tile_name}/Smeared/{obsid}'
-            if (os.path.isdir(dirpath) == False) & (os.path.isdir(smeared_dirpath) == False):
-                undownloaded_files.append(obsid)
-
-    return undownloaded_files
-
-def download_new_files(undownloaded_files, tile_name, tile_ra, tile_dec):
-
-    #Run ObsQuery for all files in the region of the sky that we are interested in
-    query = ObsQuery(ra=tile_ra, dec=tile_dec, radius = 0.18)
-
-    #loop through all queried observations
-    #if obsid is in undownloaded_files, download the UVOT data for the observation
-    for ind, q in enumerate(query):
-        if query[ind].obsid in undownloaded_files:
-            Data(obsid=query[ind].obsid, uvot=True, uksdc=True, outdir=f"~/S-CUBED/{tile_name}/UVOT")
 
 
 def detect_smeared_frames(base_path):
@@ -982,12 +651,18 @@ def detect_smeared_frames(base_path):
                 if len(df) == 0:
                     continue
 
-                a = np.mean(df['PROF_MAJOR'])
-                b = np.mean(df['PROF_MINOR'])
+                # Use median instead of mean better for outlier
+                # detections (cosmic rays, satellite trails, edge-of-FOV
+                # artifacts) that could otherwise inflate a clean frame's
+                # apparent elongation. Real smearing affects all sources
+                # uniformly, so median captures it just as well as mean
+                # without the outlier risk. At least So I have been told
+                a = np.median(df['PROF_MAJOR'])
+                b = np.median(df['PROF_MINOR'])
                 if a > 0 and a >= b:
                     c = math.sqrt(a**2 - b**2)
                     e = c / a
-                    if e >= 0.5:
+                    if e >= 0.50:  # Might make this a variable later.
                         smeared_by_ext[(obs_folder, band, ext_num)] = True
                         print(f"  Smeared: {os.path.basename(obs_folder)} "
                               f"{band} ext{ext_num} (e={e:.3f})")
@@ -1107,139 +782,7 @@ def get_observation_folder(detect_filepath, base_path):
         
 
 
-# Currently Neither of these do anything "check_aspect_correction"
-def check_aspect_correction(filepath):
 
-    aspect_uncorrected = []
-
-    for path in tqdm(sorted(os.listdir(filepath))):
-        if path == '.DS_Store':
-            continue
-        else:
-            subpath = os.path.join(filepath, path)
-
-            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-            full_sourcepath = os.path.join(subpath, sourcepath_fill)
-            
-            exists = os.path.exists(full_sourcepath)
-            
-            if exists == True:
-                fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
-
-                aspcorr_output = run_fkeyprint(fkeyprint_command)
-
-                if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                elif re.search("ASPCORR = 'UNICORR '", aspcorr_output):
-                    continue
-                else:
-                    aspect_uncorrected.append(path)
-                
-            elif exists == False:
-                continue
-
-    return aspect_uncorrected
-
-def check_aspect_correction_verbose(filepath):
-
-    aspect_uncorrected = []
-
-    for path in tqdm(sorted(os.listdir(filepath))):
-        if path == '.DS_Store':
-            continue
-        else:
-            subpath = os.path.join(filepath, path)
-
-            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-            full_sourcepath = os.path.join(subpath, sourcepath_fill)
-            
-            exists = os.path.exists(full_sourcepath)
-            
-            if exists == True:
-                fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
-
-                aspcorr_output = run_fkeyprint_verbose(fkeyprint_command)
-
-                if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                elif re.search("ASPCORR = 'UNICORR '", aspcorr_output):
-                    continue
-                else:
-                    aspect_uncorrected.append(path)
-                
-            elif exists == False:
-                continue
-
-    return aspect_uncorrected
-
-def check_direct_corrections(filepath):
-
-    aspect_direct = []
-
-    for path in tqdm(sorted(os.listdir(filepath))):
-        if path == '.DS_Store':
-            continue
-        else:
-            subpath = os.path.join(filepath, path)
-
-            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-            full_sourcepath = os.path.join(subpath, sourcepath_fill)
-            
-            exists = os.path.exists(full_sourcepath)
-            
-            if exists == True:
-                fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
-
-                aspcorr_output = run_fkeyprint(fkeyprint_command)
-
-                if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                else:
-                    aspect_direct.append(path)
-                
-            elif exists == False:
-                continue
-
-    return aspect_direct
-
-def check_direct_corrections_verbose(filepath):
-
-    aspect_direct = []
-
-    for path in tqdm(sorted(os.listdir(filepath))):
-        if path == '.DS_Store':
-            continue
-        else:
-            subpath = os.path.join(filepath, path)
-
-            sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img'
-            full_sourcepath = os.path.join(subpath, sourcepath_fill)
-            
-            exists = os.path.exists(full_sourcepath)
-            
-            if exists == True:
-                fkeyprint_command = create_fkeyprint_bash_command(full_sourcepath)
-
-                aspcorr_output = run_fkeyprint_verbose(fkeyprint_command)
-
-                if re.search("ASPCORR = 'DIRECT  '", aspcorr_output):
-                    continue
-                else:
-                    aspect_direct.append(path)
-                
-            elif exists == False:
-                continue
-
-    return aspect_direct
-
-def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tiles):
-
-    for auct in tqdm(aspect_uncorrected_tiles):
-    
-        source = os.path.join(in_filepath, auct)
-        destination = out_filepath+'AspectNone'
-    
-        shutil.move(source, destination)
         
 def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
 
@@ -1397,43 +940,62 @@ def create_ref_obs_reg_files(ref_bright_stars, obs_bright_stars, outpath=None):
     with open(obs_filename, mode='w', encoding='utf-8') as obsfile:
         obsfile.write(obs_reg_text)
 
-def write_source_reg_files(base_path, target_ra, target_dec,
-                           save_path=None,
-                           source_radius=5.0, max_offset=10.0,
-                           output_name="auto_source.reg"):
+def run_upper_limit_uvotsource(obs_table, base_path, save_path,
+                                target_ra, target_dec,
+                                source_radius=5.0,
+                                bkg_reg_name="auto_bkg.reg"):
     """
-    Auto-generate a source region file per observation directory.
+    Compute 3-sigma upper limits for non-detections.
 
-    Hello thomas, some changes had to be made, the normal ones being
-    not hard coding it ad having it loop through the data.
-    you had it pulling from the same detect.fits file for everything,
-    I cant do that because I have summed files that need new detect.fits
-    since the position on the star(especially after aspect correction)
-    may be very different, so I use/ make a detect.fits for each.
-    
+    A "non-detection" here is any obs+band that did NOT get a normal
+    {band}_finalsource.fits during the main uvotsource pass. That covers:
+      - Frames where uvotdetect failed (file moved to DetectFailed/)
+      - Frames where uvotdetect found field sources but none within the
+        max_offset of the target (no source region was written)
+
+    For each such frame we run a NORMAL uvotsource with:
+      - srcreg : a 5" source region placed at the catalog target position
+      - bkgreg : the SAME auto_bkg.reg the background generator already
+                 wrote into this directory 
+
+    We then read AB_MAG_LIM from the output — the 3-sigma limiting
+    magnitude and report it as the upper limit. Because these are
+    non-detections by construction, every row from this pass is flagged
+    UpperLimit=True; we do not attempt to salvage a measurement from
+    AB_MAG.
+
+    Output files are named {band}_finalsource_ul.fits and are tagged
+    UpperLimit=True during master compilation.
+
+    Returns
+    -------
+    upper_limit_paths : list of str
     """
-    source_coords = SkyCoord(target_ra, target_dec, unit='deg', frame='icrs')
-    QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"}
     BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+    QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"}
 
-    created = 0
-    used_corrected_detect = 0
-    used_old_detect = 0
-    skipped_no_source = 0
-    skipped_no_detect = 0
-    corrected_detects_run = 0
+    print("\n" + "=" * 70)
+    print("UPPER-LIMIT PHOTOMETRY FOR NON-DETECTIONS (Option 1)")
+    print("=" * 70)
+    print(f"Target: RA={target_ra:.6f}, Dec={target_dec:.6f}")
+    print(f"Method: normal uvotsource, src region at target, "
+          f"reusing {bkg_reg_name}; report AB_MAG_LIM")
 
-    print(f"Generating source regions for target RA={target_ra:.6f}, Dec={target_dec:.6f}")
+    # Source region at the catalog target position. Required because
+    # srcreg=NONE is broken in uvotsource v4.5 (it gets passed to
+    # uvotinteg as a literal filename). A real region at the target
+    # gives uvotsource what it needs to compute AB_MAG_LIM.
+    ul_src_text = (
+        f'# Region file format: DS9 version 4.1\n'
+        f'# Upper-limit source region (catalog target position)\n'
+        f'fk5\n'
+        f'circle({target_ra},{target_dec},{source_radius}")\n'
+    )
 
-    #
-    # Run uvotdetect on summed images that don't have detect
-    # files yet. we need this for the catalogs that match
-    # the summed image coordinate system. I also just figured out
-    # we also need to do this for anything that was aspect corrected.
-    #
-    
-    # Track files that had to be quarantined due to detect failures
-    detect_failures = []
+    upper_limit_paths = []
+    n_processed = 0
+    n_skipped = 0
+    n_failed = 0
 
     for root, dirs, files in os.walk(base_path):
         normalised = os.path.normpath(root)
@@ -1446,10 +1008,34 @@ def write_source_reg_files(base_path, target_ra, target_dec,
         obsid_match = re.search(r"(\d{11})", root)
         obsid = obsid_match.group(1) if obsid_match else "?"
 
+        # Reuse the background region the generator already produced.
+        # If it's missing, we can't compute a limit here.
+        bkg_reg_path = os.path.join(root, bkg_reg_name)
+        if not os.path.exists(bkg_reg_path):
+            continue
+
         current_files = os.listdir(root)
+        detect_failed_dir = os.path.join(root, "DetectFailed")
+        detect_failed_files = (os.listdir(detect_failed_dir)
+                               if os.path.isdir(detect_failed_dir) else [])
 
         for band in BANDS:
-            # Find the file uvotsource will actually use
+            # If a normal detection exists for this band, this is NOT a
+            # non-detection — skip it. The UL pass only handles leftovers.
+            finalsource_file = f"{band}_finalsource.fits"
+            if finalsource_file in current_files:
+                continue
+
+            # Already computed the upper limit on a previous run? Reuse it.
+            ul_output = f"{band}_finalsource_ul.fits"
+            ul_output_path = os.path.join(root, ul_output)
+            if os.path.exists(ul_output_path):
+                upper_limit_paths.append(ul_output_path)
+                n_skipped += 1
+                continue
+
+            # Locate an image file to run on. Priority: summed SK, raw SK,
+            # then anything matching this band sitting in DetectFailed/.
             summed_file = f"{band}_ex_summed.fits"
             sk_img = f"sw{obsid}{band}_sk.img"
             sk_gz = f"sw{obsid}{band}_sk.img.gz"
@@ -1462,281 +1048,102 @@ def write_source_reg_files(base_path, target_ra, target_dec,
             elif sk_gz in current_files:
                 input_file = sk_gz
             else:
+                # Try restoring a file from DetectFailed/
+                for ff in detect_failed_files:
+                    if band in ff.lower():
+                        src_p = os.path.join(detect_failed_dir, ff)
+                        dst_p = os.path.join(root, ff)
+                        if not os.path.exists(dst_p):
+                            try:
+                                shutil.copy2(src_p, dst_p)
+                            except Exception:
+                                continue
+                        input_file = ff
+                        break
+
+            if input_file is None:
+                # No image for this band in this obs — nothing to do.
                 continue
 
-            # The detect file for this input
-            detect_file = f"{band}_corrected_detect.fits"
-            detect_path = os.path.join(root, detect_file)
+            # Locate the exposure map (same priority logic as normal pass)
+            exp_summed = f"{band}_expmap_summed.fits"
+            exp_img = f"sw{obsid}{band}_ex.img"
+            exp_gz = f"sw{obsid}{band}_ex.img.gz"
+            exp_file = "NONE"
+            if input_file == summed_file:
+                if os.path.exists(os.path.join(root, exp_summed)):
+                    exp_file = exp_summed
+            else:
+                if os.path.exists(os.path.join(root, exp_img)):
+                    exp_file = exp_img
+                elif os.path.exists(os.path.join(root, exp_gz)):
+                    exp_file = exp_gz
 
-            # Skip if already created
-            if os.path.exists(detect_path):
-                continue
+            # Write the source region at the target position
+            ul_src_name = "auto_source_ul.reg"
+            with open(os.path.join(root, ul_src_name), 'w') as f:
+                f.write(ul_src_text)
 
-            print(f"Running uvotdetect on {obsid}/{band} ({input_file})...")
+            print(f" [{obsid} / {band}] Non-detection — computing "
+                  f"upper limit (input: {input_file})")
 
+            # Normal uvotsource. The output's AB_MAG_LIM is the 3-sigma
+            # limiting magnitude we report as the upper limit.
             if HEASOFT_BACKEND == "wsl":
                 wsl_dir = prepare_path(root)
-                cmd = (f"cd '{wsl_dir}' && "
-                       f"uvotdetect infile='{input_file}' "
-                       f"outfile='{detect_file}' "
-                       f"expfile=NONE threshold=3")
+                cmd = (
+                    f"cd '{wsl_dir}' && "
+                    f"uvotsource image='{input_file}' "
+                    f"srcreg='{ul_src_name}' "
+                    f"bkgreg='{bkg_reg_name}' "
+                    f"sigma=3 "
+                    f"expfile='{exp_file}' "
+                    f"zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB "
+                    f"syserr=NO frametime=DEFAULT apercorr=NONE output=ALL "
+                    f"outfile='{ul_output}' "
+                    f"cleanup=YES clobber=YES chatter=1"
+                )
             else:
-                cmd = (f"cd '{root}' && "
-                       f"uvotdetect infile='{input_file}' "
-                       f"outfile='{detect_file}' "
-                       f"expfile=NONE threshold=3")
+                cmd = (
+                    f"cd '{root}' && "
+                    f"uvotsource image='{input_file}' "
+                    f"srcreg='{ul_src_name}' "
+                    f"bkgreg='{bkg_reg_name}' "
+                    f"sigma=3 "
+                    f"expfile='{exp_file}' "
+                    f"zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB "
+                    f"syserr=NO frametime=DEFAULT apercorr=NONE output=ALL "
+                    f"outfile='{ul_output}' "
+                    f"cleanup=YES clobber=YES chatter=1"
+                )
 
             run_heasoft_command(cmd)
-            time.sleep(2)
+            time.sleep(1)
 
-            # Retry once if it failed
-            if not os.path.exists(detect_path):
-                print(f"Retrying {obsid}/{band}...")
-                time.sleep(3)
-                run_heasoft_command(cmd)
-                time.sleep(2)
-
-            if os.path.exists(detect_path):
-                corrected_detects_run += 1
+            if os.path.exists(ul_output_path):
+                upper_limit_paths.append(ul_output_path)
+                n_processed += 1
+                print(f" ✅ Upper limit computed")
             else:
-                # Failed twice — move the input file to a subfolder
-                # so it can't be used with a mismatched source region
-                print(f"❌ uvotdetect failed twice for {obsid}/{band}")
-                print(f"Moving {input_file} to DetectFailed/")
+                n_failed += 1
+                print(f" ❌ uvotsource failed to produce output")
 
-                failed_dir = os.path.join(root, "DetectFailed")
-                os.makedirs(failed_dir, exist_ok=True)
+    print(f"\nUpper-limit photometry summary:")
+    print(f" Processed:    {n_processed}")
+    print(f" Skipped:      {n_skipped} (already computed)")
+    print(f" Failed:       {n_failed}")
+    print(f" Total upper-limit files: {len(upper_limit_paths)}")
+    print("=" * 70)
 
-                src_path = os.path.join(root, input_file)
-                dst_path = os.path.join(failed_dir, input_file)
+    return upper_limit_paths
 
-                try:
-                    shutil.move(src_path, dst_path)
-                    print(f"Moved: {input_file}")
-                except Exception as e:
-                    print(f"Error moving: {e}")
 
-                detect_failures.append({
-                    'ObsID': obsid,
-                    'Band': band,
-                    'File': input_file,
-                    'Directory': root,
-                })
-
-    if corrected_detects_run > 0:
-        print(f"  Created {corrected_detects_run} new detect files from corrected images")
-
-    # Save detect failure report
-    if detect_failures:
-        print(f"\n  WARNING: {len(detect_failures)} files moved to DetectFailed/")
-        fail_df = pd.DataFrame(detect_failures)
-        fail_path = os.path.join(save_path, "detect_failures.csv")
-        fail_df.to_csv(fail_path, index=False)
-        print(f"Failure report saved: {fail_path}")
-
-    # 
-    # For each observation directory, find the best detect file
-    # and centroid the source from it. First use {band}_corrected_detect.fits
-    # if that isnt in the folder use the normal {band}_detect.fits / {band}_detect_ext1.fits
-    #
-    print("  Centroiding source positions...")
-
-    for root, dirs, files in os.walk(base_path):
-        normalised = os.path.normpath(root)
-        if not normalised.endswith(os.path.join("uvot", "image")):
-            continue
-        path_parts = normalised.split(os.sep)
-        if any(q in path_parts for q in QUARANTINE):
-            continue
-
-        obsid_match = re.search(r"(\d{11})", root)
-        obsid = obsid_match.group(1) if obsid_match else "?"
-
-        # Refresh file list (detect files may have just been created)
-        current_files = os.listdir(root)
-
-        best_detect = None
-        is_corrected = False
-
-        # First: look for corrected detect file (ALWAYS preferred)
-        for f in current_files:
-            if f.endswith("_corrected_detect.fits"):
-                detect_path = os.path.join(root, f)
-                try:
-                    with fits.open(detect_path) as hdul:
-                        if len(hdul) >= 2 and hdul[1].data is not None:
-                            if len(hdul[1].data) > 0:
-                                best_detect = detect_path
-                                is_corrected = True
-                                break
-                except Exception:
-                    continue
-
-        # Second: only if no corrected detect, fall back to old detect
-        if best_detect is None:
-            best_count = 0
-            for f in current_files:
-                if f.endswith("_detect.fits") or f.endswith("_detect_ext1.fits"):
-                    if "_corrected_detect" in f:
-                        continue
-                    detect_path = os.path.join(root, f)
-                    try:
-                        with fits.open(detect_path) as hdul:
-                            if len(hdul) >= 2 and hdul[1].data is not None:
-                                n = len(hdul[1].data)
-                                if n > best_count:
-                                    best_detect = detect_path
-                                    best_count = n
-                                    is_corrected = False
-                    except Exception:
-                        continue
-
-        # No detect file at all — skip this directory
-        if best_detect is None:
-            print(f"[{obsid}] No detect file found — skipping")
-            skipped_no_detect += 1
-            continue
-
-        # Open detect file and find closest source to target
-        try:
-            with fits.open(best_detect) as hdul:
-                data = hdul[1].data
-
-                detected_frame = pd.DataFrame(columns=['RA', 'DEC', 'SEP'])
-
-                for ind, val in enumerate(data):
-                    detected_frame.loc[ind, 'RA'] = val['RA']
-                    detected_frame.loc[ind, 'DEC'] = val['DEC']
-
-                if len(detected_frame.index) < 1:
-                    print(f"    [{obsid}] Detect file empty — skipping")
-                    skipped_no_detect += 1
-                    continue
-
-                # Calculate separation from target to each detected source
-                # Thomas might recognize this part.
-                for ind in detected_frame.index:
-                    # Generate a SkyCoord object for each star
-                    ra = detected_frame.loc[ind, 'RA']
-                    dec = detected_frame.loc[ind, 'DEC']
-
-                    star_coords = SkyCoord(ra, dec, unit='deg', frame='fk5')
-                    # Calculate separation to source and append to dataframe
-                    sep = star_coords.separation(source_coords).to(u.arcsecond)
-                    detected_frame.loc[ind, 'SEP'] = sep
-
-                # Look for star with min separation and grab coordinates
-                min_sep = detected_frame['SEP'].idxmin()
-
-                min_ra = detected_frame.loc[min_sep, 'RA']
-                min_dec = detected_frame.loc[min_sep, 'DEC']
-                min_dist = detected_frame.loc[min_sep, 'SEP']
-
-                # Check to see how far away the nearest star is before
-                # writing a region file. If too far, no region is created
-                # and uvotsource will skip this observation.
-                if min_dist <= (max_offset * u.arcsecond):
-                    reg_path = os.path.join(root, output_name)
-                    reg_text = (
-                        f'# Region file format: DS9 version 4.1\n'
-                        f'fk5\n'
-                        f'circle({min_ra},{min_dec},{source_radius}")\n'
-                    )
-                    with open(reg_path, 'w') as f:
-                        f.write(reg_text)
-
-                    created += 1
-                    if is_corrected:
-                        used_corrected_detect += 1
-                    else:
-                        used_old_detect += 1
-                else:
-                    print(f"[{obsid}] Nearest source {min_dist:.1f} away "
-                          f"(>{max_offset}\") — no region written")
-                    skipped_no_source += 1
-
-        except Exception as e:
-            print(f"[{obsid}] Error reading detect file: {e}")
-            skipped_no_detect += 1
-            continue
-
-    print(f"\n  Source region summary:")
-    print(f" Created: {created}")
-    print(f" Used corrected detect centroid: {used_corrected_detect}")
-    print(f" Used old detect centroid: {used_old_detect}")
-    print(f" Skipped (no source within {max_offset}\"): {skipped_no_source}")
-    print(f" Skipped (no detect file): {skipped_no_detect}")
+#######################################################################################
 
 
 
-def find_aspect_none_snapshots(path_to_frame):
-
-    fkeyprint_command = up.create_fkeyprint_bash_command(path_to_frame)
-
-    fkeyprint_out = up.run_fkeyprint(fkeyprint_command)
-
-    corrected = re.findall("# EXTENSION:    [0-9]\nASPCORR = 'DIRECT  '", fkeyprint_out)
-    uncorrected = re.findall("# EXTENSION:    [0-9]\nASPCORR = 'NONE    '", fkeyprint_out)
-    
-    exclude=[]
-    
-    for frame in uncorrected:
-        exclude_frame = re.findall("[0-9]", frame)[0]
-        exclude.append(exclude_frame)
-    
-    if len(exclude) > 0:
-        exclude_string = ','.join(exclude)
-        return exclude_string
-    else:
-        print('No snapshots need aspect correction. Excluding no frames from master ref.')
-        return None
-
-def create_master_ref_file(source_name, band, ref_files, group_name):
-    """
-    Takes uvot reference frames and sums them together. 
-    INPUT:
-        ref_files (list): list of obsids of the relevant reference files.
-    """
-
-    if not ref_files:
-        raise ValueError("ref_files list is empty")
-
-    os.makedirs(f'./{source_name}/Ref_Frames', exist_ok=True)
-
-    # --- Sum first file ---
-    primary_file = ref_files[0]
-
-    primary_imsum_command = create_uvotimsum_too_bash_command(
-        source_name, primary_file, band, 'sk', ref_frame=True
-    )
-    run_uvotimsum(primary_imsum_command)
-
-    os.rename(
-        f'./{source_name}/Ref_Frames/{primary_file}_{band}_summed.fits',
-        f'./{source_name}/Ref_Frames/{group_name}_summed.fits'
-    )
-
-    # --- Append remaining files ---
-    for ref_id in ref_files[1:]:
-        imsum_command = create_uvotimsum_too_bash_command(
-            source_name, ref_id, band, 'sk', ref_frame=True
-        )
-        run_uvotimsum(imsum_command)
-
-        outfilename = f'./{source_name}/Ref_Frames/{ref_id}_{band}_summed.fits'
-
-        fappend_command = create_fappend_bash_command(
-            outfilename,
-            f'./{source_name}/Ref_Frames/{group_name}_summed.fits'
-        )
-        run_fappend(fappend_command)
-
-    # --- Final master sum ---
-    mastersum_command = create_uvotimsum_master_ref_bash_command(
-        source_name, group_name
-    )
-    run_uvotimsum(mastersum_command)
-
+#################################################################################### Bellow functions are Currently Not apart of the pipeline
+# They can be removed at anytime currently, keeping them for now.
 
 def download_ogle_data(ogle_name, source_name):
 
@@ -1786,7 +1193,7 @@ def read_xrt_data(source_name):
 
     return xrt_data, xrt_ul_data
 
-
+#################################################################################### 
 
 # -------------------- The hunt for Red ASPCORR -----------------------------
 # This has given me some pause for some time as what I did in the past was a very basic bit of code that used existing fkeyprint code and read the extension
@@ -2049,30 +1456,6 @@ def swift_automation_mode(base_path=None, save_path=None):
     all_frames, summary, _ = _run_core_engine(base_path, save_path)
     return all_frames, summary
 
-def swift_interactive_mode():
-    print("\n=== Swift UVOT Interactive Mode ===")
-    all_frames, summary, save_dir = _run_core_engine()
-    if all_frames is None: return
-
-    summary_path = _get_unique_filename(os.path.join(save_dir, "workload_summary.csv"))
-    summary.to_csv(summary_path, index=False)
-    
-    print(f"\nSummary saved to: {os.path.basename(summary_path)}")
-    print("\n--- WORKLOAD SUMMARY ---")
-    print(summary['Status'].value_counts().to_frame())
-    
-    while True:
-        choice = input("\nEnter Group_ID to export (or 'q' to quit): ").lower()
-        if choice == 'q': break
-        try:
-            g_id = int(choice)
-            g_data = all_frames[all_frames['Group_ID'] == g_id].sort_values(by='ASPCORR', ascending=False)
-            if not g_data.empty:
-                detail_path = _get_unique_filename(os.path.join(save_dir, f"Group_{g_id}_Details.csv"))
-                g_data.to_csv(detail_path, index=False)
-                print(f"Exported: {os.path.basename(detail_path)}")
-                print(g_data[['OBSID', 'Band', 'ASPCORR', 'Filename']].to_string(index=False))
-        except: print("Invalid ID.")
 
     
 #Orhan group sorting
@@ -2849,46 +2232,276 @@ def update_smeared_flags(obs_table, smeared_obs_folders,
     return obs_table
     
 
-def refresh_observations_table_after_correction(obs_table, corrected_obsids, band):
+###########################################################
+def write_source_reg_files(base_path, target_ra, target_dec,
+                           save_path=None,
+                           source_radius=5.0, max_offset=10.0,
+                           output_name="auto_source.reg"):
     """
-    Updates the obs_table after corrections to reflect new ASPCORR status.
-    """
-    for obsid, snapshot in corrected_obsids:
-        # Find the row(s) to update
-        mask = (obs_table['ObsID'] == obsid) & \
-               (obs_table['Filter'] == band) & \
-               (obs_table['Snapshot'] == snapshot)
-        
-        if mask.any():
-            # Get the file path to re-read ASPCORR
-            file_path = obs_table.loc[mask, 'Full_Path'].iloc[0]
-            
-            # Re-read the extension status
-            try:
-                if file_path.endswith('.gz'):
-                    img_path = file_path[:-3]
-                else:
-                    img_path = file_path
-                
-                if os.path.exists(img_path):
-                    with fits.open(img_path) as hdul:
-                        if snapshot < len(hdul):
-                            aspcorr = hdul[snapshot].header.get('ASPCORR', 'NONE')
-                            aspcorr = str(aspcorr).strip().upper()
-                            
-                            # Treat UNICORR as DIRECT (Might have to change this)
-                            if aspcorr == 'UNICORR':
-                                aspcorr = 'DIRECT'
-                            
-                            # Update table
-                            obs_table.loc[mask, 'Extension_Status'] = aspcorr
-                            obs_table.loc[mask, 'AspCorr Flag'] = (aspcorr == 'DIRECT')
-                            
-            except Exception as e:
-                print(f"Warning: Could not update table for {obsid} ext {snapshot}: {e}")
-    
-    return obs_table
+    Auto-generate a source region file per observation directory.
 
+    Hello thomas, some changes had to be made, the normal ones being
+    not hard coding it ad having it loop through the data.
+    you had it pulling from the same detect.fits file for everything,
+    I cant do that because I have summed files that need new detect.fits
+    since the position on the star(especially after aspect correction)
+    may be very different, so I use/ make a detect.fits for each.
+    
+    """
+    source_coords = SkyCoord(target_ra, target_dec, unit='deg', frame='icrs')
+    QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"}
+    BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"]
+
+    created = 0
+    used_corrected_detect = 0
+    used_old_detect = 0
+    skipped_no_source = 0
+    skipped_no_detect = 0
+    corrected_detects_run = 0
+
+    print(f"Generating source regions for target RA={target_ra:.6f}, Dec={target_dec:.6f}")
+
+    #
+    # Run uvotdetect on summed images that don't have detect
+    # files yet. we need this for the catalogs that match
+    # the summed image coordinate system. I also just figured out
+    # we also need to do this for anything that was aspect corrected.
+    #
+    
+    # Track files that had to be quarantined due to detect failures
+    detect_failures = []
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
+
+        obsid_match = re.search(r"(\d{11})", root)
+        obsid = obsid_match.group(1) if obsid_match else "?"
+
+        current_files = os.listdir(root)
+
+        for band in BANDS:
+            # Find the file uvotsource will actually use
+            summed_file = f"{band}_ex_summed.fits"
+            sk_img = f"sw{obsid}{band}_sk.img"
+            sk_gz = f"sw{obsid}{band}_sk.img.gz"
+
+            input_file = None
+            if summed_file in current_files:
+                input_file = summed_file
+            elif sk_img in current_files:
+                input_file = sk_img
+            elif sk_gz in current_files:
+                input_file = sk_gz
+            else:
+                continue
+
+            # The detect file for this input
+            detect_file = f"{band}_corrected_detect.fits"
+            detect_path = os.path.join(root, detect_file)
+
+            # Skip if already created
+            if os.path.exists(detect_path):
+                continue
+
+            print(f"Running uvotdetect on {obsid}/{band} ({input_file})...")
+
+            if HEASOFT_BACKEND == "wsl":
+                wsl_dir = prepare_path(root)
+                cmd = (f"cd '{wsl_dir}' && "
+                       f"uvotdetect infile='{input_file}' "
+                       f"outfile='{detect_file}' "
+                       f"expfile=NONE threshold=3 clobber=YES")
+            else:
+                cmd = (f"cd '{root}' && "
+                       f"uvotdetect infile='{input_file}' "
+                       f"outfile='{detect_file}' "
+                       f"expfile=NONE threshold=3 clobber=YES")
+
+            run_heasoft_command(cmd)
+            time.sleep(2)
+
+            # Retry once if it failed
+            if not os.path.exists(detect_path):
+                print(f"Retrying {obsid}/{band}...")
+                time.sleep(3)
+                run_heasoft_command(cmd)
+                time.sleep(2)
+
+            if os.path.exists(detect_path):
+                corrected_detects_run += 1
+            else:
+                # Failed twice — move the input file to a subfolder
+                # so it can't be used with a mismatched source region
+                print(f"❌ uvotdetect failed twice for {obsid}/{band}")
+                print(f"Moving {input_file} to DetectFailed/")
+
+                failed_dir = os.path.join(root, "DetectFailed")
+                os.makedirs(failed_dir, exist_ok=True)
+
+                src_path = os.path.join(root, input_file)
+                dst_path = os.path.join(failed_dir, input_file)
+
+                try:
+                    shutil.move(src_path, dst_path)
+                    print(f"Moved: {input_file}")
+                except Exception as e:
+                    print(f"Error moving: {e}")
+
+                detect_failures.append({
+                    'ObsID': obsid,
+                    'Band': band,
+                    'File': input_file,
+                    'Directory': root,
+                })
+
+    if corrected_detects_run > 0:
+        print(f"  Created {corrected_detects_run} new detect files from corrected images")
+
+    # Save detect failure report
+    if detect_failures:
+        print(f"\n  WARNING: {len(detect_failures)} files moved to DetectFailed/")
+        fail_df = pd.DataFrame(detect_failures)
+        fail_path = os.path.join(save_path, "detect_failures.csv")
+        fail_df.to_csv(fail_path, index=False)
+        print(f"Failure report saved: {fail_path}")
+
+    # 
+    # For each observation directory, find the best detect file
+    # and centroid the source from it. First use {band}_corrected_detect.fits
+    # if that isnt in the folder use the normal {band}_detect.fits / {band}_detect_ext1.fits
+    #
+    print("  Centroiding source positions...")
+
+    for root, dirs, files in os.walk(base_path):
+        normalised = os.path.normpath(root)
+        if not normalised.endswith(os.path.join("uvot", "image")):
+            continue
+        path_parts = normalised.split(os.sep)
+        if any(q in path_parts for q in QUARANTINE):
+            continue
+
+        obsid_match = re.search(r"(\d{11})", root)
+        obsid = obsid_match.group(1) if obsid_match else "?"
+
+        # Refresh file list (detect files may have just been created)
+        current_files = os.listdir(root)
+
+        best_detect = None
+        is_corrected = False
+
+        # First: look for corrected detect file (ALWAYS preferred)
+        for f in current_files:
+            if f.endswith("_corrected_detect.fits"):
+                detect_path = os.path.join(root, f)
+                try:
+                    with fits.open(detect_path) as hdul:
+                        if len(hdul) >= 2 and hdul[1].data is not None:
+                            if len(hdul[1].data) > 0:
+                                best_detect = detect_path
+                                is_corrected = True
+                                break
+                except Exception:
+                    continue
+
+        # Second: only if no corrected detect, fall back to old detect
+        if best_detect is None:
+            best_count = 0
+            for f in current_files:
+                if f.endswith("_detect.fits") or f.endswith("_detect_ext1.fits"):
+                    if "_corrected_detect" in f:
+                        continue
+                    detect_path = os.path.join(root, f)
+                    try:
+                        with fits.open(detect_path) as hdul:
+                            if len(hdul) >= 2 and hdul[1].data is not None:
+                                n = len(hdul[1].data)
+                                if n > best_count:
+                                    best_detect = detect_path
+                                    best_count = n
+                                    is_corrected = False
+                    except Exception:
+                        continue
+
+        # No detect file at all — skip this directory
+        if best_detect is None:
+            print(f"[{obsid}] No detect file found — skipping")
+            skipped_no_detect += 1
+            continue
+
+        # Open detect file and find closest source to target
+        try:
+            with fits.open(best_detect) as hdul:
+                data = hdul[1].data
+
+                detected_frame = pd.DataFrame(columns=['RA', 'DEC', 'SEP'])
+
+                for ind, val in enumerate(data):
+                    detected_frame.loc[ind, 'RA'] = val['RA']
+                    detected_frame.loc[ind, 'DEC'] = val['DEC']
+
+                if len(detected_frame.index) < 1:
+                    print(f"    [{obsid}] Detect file empty — skipping")
+                    skipped_no_detect += 1
+                    continue
+
+                # Calculate separation from target to each detected source
+                # Thomas might recognize this part.
+                for ind in detected_frame.index:
+                    # Generate a SkyCoord object for each star
+                    ra = detected_frame.loc[ind, 'RA']
+                    dec = detected_frame.loc[ind, 'DEC']
+
+                    star_coords = SkyCoord(ra, dec, unit='deg', frame='fk5')
+                    # Calculate separation to source and append to dataframe
+                    sep = star_coords.separation(source_coords).to(u.arcsecond)
+                    detected_frame.loc[ind, 'SEP'] = sep
+
+                # Look for star with min separation and grab coordinates
+                min_sep = detected_frame['SEP'].idxmin()
+
+                min_ra = detected_frame.loc[min_sep, 'RA']
+                min_dec = detected_frame.loc[min_sep, 'DEC']
+                min_dist = detected_frame.loc[min_sep, 'SEP']
+
+                # Check to see how far away the nearest star is before
+                # writing a region file. If too far, no region is created
+                # and uvotsource will skip this observation.
+                if min_dist <= (max_offset * u.arcsecond):
+                    reg_path = os.path.join(root, output_name)
+                    reg_text = (
+                        f'# Region file format: DS9 version 4.1\n'
+                        f'fk5\n'
+                        f'circle({min_ra},{min_dec},{source_radius}")\n'
+                    )
+                    with open(reg_path, 'w') as f:
+                        f.write(reg_text)
+
+                    created += 1
+                    if is_corrected:
+                        used_corrected_detect += 1
+                    else:
+                        used_old_detect += 1
+                else:
+                    print(f"[{obsid}] Nearest source {min_dist:.1f} away "
+                          f"(>{max_offset}\") — no region written")
+                    skipped_no_source += 1
+
+        except Exception as e:
+            print(f"[{obsid}] Error reading detect file: {e}")
+            skipped_no_detect += 1
+            continue
+
+    print(f"\n  Source region summary:")
+    print(f" Created: {created}")
+    print(f" Used corrected detect centroid: {used_corrected_detect}")
+    print(f" Used old detect centroid: {used_old_detect}")
+    print(f" Skipped (no source within {max_offset}\"): {skipped_no_source}")
+    print(f" Skipped (no detect file): {skipped_no_detect}")
 
 
 ###############################################################################
@@ -3667,6 +3280,23 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
     print(f" Failed    : {failed}")
     print(f"{'─' * 70}\n")
 
+
+    #################################################################################
+    # Upper-limit pass for failed-detect frames
+    # Run uvotsource at the catalog position with a small aperture for
+    # any file that was moved to DetectFailed/ during region generation.
+    # These yield upper-limit magnitudes which still tell us "the source
+    # was at most this bright" — useful for light-curve analysis.
+    #################################################################################
+    if target_ra is not None and target_dec is not None:
+        run_upper_limit_uvotsource(
+            obs_table=obs_table,
+            base_path=base_path,
+            save_path=save_path,
+            target_ra=target_ra,
+            target_dec=target_dec,
+        )
+        
     #################################################################################
     # Read finalsource files and make Master CSV 
    
@@ -3686,14 +3316,28 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
             continue
  
         for f in files:
-            if not f.endswith("_finalsource.fits"):
+            # Match either normal finalsource OR upper-limit finalsource
+            # Examples:
+            # uw1_finalsource.fits     (normal detection)
+            # uw1_finalsource_ul.fits  (upper limit)
+            is_upper_limit = False
+            if f.endswith("_finalsource_ul.fits"):
+                is_upper_limit = True
+            elif f.endswith("_finalsource.fits"):
+                is_upper_limit = False
+            else:
                 continue
  
             files_found += 1
             filepath = os.path.join(root_dir, f)
  
-            # Extract band from filename (e.g. "uw1_finalsource.fits" -> "uw1")
-            band_match = re.match(r"([a-z0-9]+)_finalsource\.fits$", f)
+            # Extract band from filename
+            # "uw1_finalsource.fits" -> "uw1"
+            # "uw1_finalsource_ul.fits" -> "uw1"
+            if is_upper_limit:
+                band_match = re.match(r"([a-z0-9]+)_finalsource_ul\.fits$", f)
+            else:
+                band_match = re.match(r"([a-z0-9]+)_finalsource\.fits$", f)
             if not band_match:
                 continue
             band = band_match.group(1)
@@ -3725,11 +3369,24 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
                     df["OBSID"] = obsid
                     df["BAND"] = band
                     df["SOURCE_FILE"] = filepath
- 
+                    df["UpperLimit"] = is_upper_limit
+
+                    # For upper-limit rows, the meaningful value is the
+                    # 3-sigma limiting magnitude (AB_MAG_LIM), not AB_MAG
+                    # (which is unreliable for a non-detection). Surface it
+                    # in a dedicated column the plotting code can read
+                    # uniformly: PLOT_MAG holds AB_MAG for detections and
+                    # AB_MAG_LIM for upper limits.
+                    if is_upper_limit and 'AB_MAG_LIM' in df.columns:
+                        df["PLOT_MAG"] = df["AB_MAG_LIM"]
+                    elif 'AB_MAG' in df.columns:
+                        df["PLOT_MAG"] = df["AB_MAG"]
+
                     all_rows.append(df)
                     band_tables[band].append(df)
                     files_loaded += 1
-                    print(f"  Loaded {f}  (ObsID {obsid})")
+                    flag = " [UL]" if is_upper_limit else ""
+                    print(f"  Loaded {f}  (ObsID {obsid}){flag}")
  
             except Exception as e:
                 print(f"  Error reading {filepath}: {e}")
@@ -3772,13 +3429,20 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
     #################################################################################
     sss_dropped = 0
     if not df_all.empty:
-        # AB_MAG=99 means uvotsource couldn't measure the source
+        is_upper_limit = (df_all['UpperLimit'] == True
+                          if 'UpperLimit' in df_all.columns
+                          else pd.Series(False, index=df_all.index))
+
         mag_99_mask = pd.Series(False, index=df_all.index)
         if 'AB_MAG' in df_all.columns:
             mag_99_mask |= (df_all['AB_MAG'] == 99.0)
             mag_99_mask |= (~np.isfinite(df_all['AB_MAG']))
         if 'AB_MAG_ERR' in df_all.columns:
             mag_99_mask |= (df_all['AB_MAG_ERR'] == 99.0)
+
+        # Don't drop upper-limit rows: their AB_MAG is legitimately 99
+        # because there's no detection. Their value lives in AB_MAG_LIM.
+        mag_99_mask &= ~is_upper_limit
 
         sss_dropped = int(mag_99_mask.sum())
         if sss_dropped > 0:
@@ -3816,15 +3480,58 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
         print(f"    Unique OBSIDs: {df_all['OBSID'].nunique()}")
         if sss_dropped > 0:
             print(f"    Dropped from final output: {sss_dropped} (SSS = AB_MAG=99)")
-
         # Optional human-readable CSV copy
         if WRITE_CSV_COPY:
             csv_path = os.path.join(save_path, "master_photometry.csv")
             df_all.to_csv(csv_path, index=False)
             print(f"  CSV copy saved (human-inspection): {csv_path}")
+        #####################################################################
+        # AUTO-GENERATE LIGHT CURVES
+
+        try:
+            # x-axis range from the data itself.
+            # df_all carries TSTART (Swift MET secs); MJD = MET/86400 + 51910.
+            try:
+                if 'MJD' in df_all.columns:
+                    _mjd = pd.to_numeric(df_all['MJD'], errors='coerce').dropna()
+                elif 'TSTART' in df_all.columns:
+                    _t = pd.to_numeric(df_all['TSTART'], errors='coerce').dropna()
+                    _mjd = _t / 86400.0 + 51910.0
+                else:
+                    _mjd = None
+
+                if _mjd is not None and len(_mjd) > 0:
+                    pad = 50.0
+                    plot_xlim = (float(_mjd.min()) - pad, float(_mjd.max()) + pad)
+                else:
+                    plot_xlim = (53000, 62000)
+            except Exception:
+                plot_xlim = (53000, 62000)
+
+            for tag, want_ul in (("no_ul", False), ("with_ul", True)):
+                try:
+                    plot_uvot_lightcurves(
+                        excel_file=txt_path,
+                        xlim=plot_xlim,
+                        ogle_file=None,        # UVOT-only auto plots
+                        xrt_files=None,
+                        overlay_plot=True,
+                        stacked_plot=True,
+                        save_prefix=os.path.join(save_path, f"lightcurve_{tag}"),
+                        Upperlimits=want_ul,
+                    )
+                    print(f"  Saved light curve set: lightcurve_{tag}_*.png")
+                except Exception as e:
+                    print(f"  WARNING: light curve '{tag}' failed: {e}")
+
+        except ImportError:
+            print("  NOTE: plot_uvot_lightcurves.py not importable — "
+                  "skipping auto light curves.")
+        except Exception as e:
+            print(f"  WARNING: auto light-curve step failed: {e}")
+
     else:
         print("\n  WARNING: No photometry to write.")
-
 
     #################################################################################
     # Return
@@ -3833,12 +3540,12 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None, bk
     else:
         print(f"\n{'=' * 70}")
         print("UVOTSOURCE PIPELINE COMPLETE")
-        print(f"{'=' * 70}") 
-        return None#Dont put it to None yet, this exists here incase we ever wanted to make it autograph rather then just spit out a table.
+        print(f"{'=' * 70}")
+        return None
 
 
 
-
+## Currently not called when running, This is to run as a diagonstic check if you wanted too.
 def diagnose_obs_table(obs_table):
     print("=" * 70)
     print("OBS_TABLE DIAGNOSTIC")
@@ -4047,47 +3754,12 @@ def find_sources(filename, threshold=1, logscale=True, shape="circle"):
 
 
 ###############################################################################
-# The helper functions (unchanged)
+# The helper function (unchanged)
 ###############################################################################
-
-def Make_Circle(RA, DEC, R, sky_frame="fk5", ra_unit=u.deg,
-                dec_unit=u.deg, size_unit=u.arcsec):
-    """Generate a list of CircleSkyRegion objects in RA/Dec."""
-    RA = np.atleast_1d(RA)
-    DEC = np.atleast_1d(DEC)
-    R = np.atleast_1d(R)
-
-    n = max(len(RA), len(DEC), len(R))
-
-    def broadcast(arr):
-        if len(arr) == 1:
-            return np.repeat(arr, n)
-        return arr
-
-    RA = broadcast(RA)
-    DEC = broadcast(DEC)
-    R = broadcast(R)
-
-    if not isinstance(RA[0], u.Quantity):
-        RA = RA * ra_unit
-    if not isinstance(DEC[0], u.Quantity):
-        DEC = DEC * dec_unit
-    if not isinstance(R[0], u.Quantity):
-        R = R * size_unit
-
-    regions = []
-    for ra, dec, r in zip(RA, DEC, R):
-        center = SkyCoord(ra, dec, frame=sky_frame)
-        circle = CircleSkyRegion(center=center, radius=2 * r)
-        regions.append(circle)
-
-    return regions
-
 
 def circle_intersects_circle(c1, r1, c2, r2):
     """Kyles's circle intersection check."""
     return c1.separation(c2) < (r1 + r2)
-
 
 ###############################################################################
 # MODIFIED find_valid_background — collects N candidates
@@ -4964,20 +4636,18 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=Non
                     # Also I dont really want to.
                     #
                     # CHANGE FROM clean_uvot_tiles.py:
-                    #   clean_uvot_tiles used a single global reference, I said it before.
+                    # clean_uvot_tiles used a single global reference, I said it before.
                     suitable_ref = None
 
-                    # First pass: try to match the same extension number
+                    # Find any DIRECT reference for this band. uvotunicorr
+                    # corrects the WCS regardless of which extension the
+                    # reference came from, I was trying to match extensions
+                    # On the old version, that was pointless.
                     for _, ref_candidate in ref_candidates.iterrows():
                         candidate_path = ref_candidate['Full_Path']
                         candidate_obsid = ref_candidate['ObsID']
                         candidate_snapshot = ref_candidate['Snapshot']
 
-                        # Skip if extension doesn't match
-                        if candidate_snapshot != obs_snapshot:
-                            continue
-
-                        # Verify the reference directory and file exist on disk, Just in case Dont want it crashing for no good reason.
                         ref_dir_check = os.path.dirname(candidate_path)
                         if not os.path.exists(ref_dir_check):
                             continue
@@ -4985,7 +4655,6 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=Non
                         actual_files = os.listdir(ref_dir_check)
                         ref_base = f"sw{candidate_obsid}{band}_sk"
 
-                        # Search for the sky image file
                         ref_file_found = None
                         for f in actual_files:
                             if f.startswith(ref_base):
@@ -4999,45 +4668,9 @@ def automated_aspect_correction(obs_table, base_path, save_path, side_buffer=Non
                                 'full_path': os.path.join(ref_dir_check, ref_file_found),
                                 'dir': ref_dir_check
                             }
-                            print(f"Using reference: ObsID {candidate_obsid}, Extension {candidate_snapshot}")
+                            print(f"    Using reference: ObsID {candidate_obsid}, "
+                                  f"Extension {candidate_snapshot}")
                             break
-
-                    # Second pass: fall back to extension 1 if no match found, ON hindisght This should proably really be changed, It works for now.
-                    # But there is no real reason to not replace it except for the fact That I am deathly Afraid that touching anything could shatter it.
-                    if suitable_ref is None:
-                        print(f" Issue 101: No extension {obs_snapshot} reference found, trying extension 1...")
-
-                        for _, ref_candidate in ref_candidates.iterrows():
-                            candidate_path = ref_candidate['Full_Path']
-                            candidate_obsid = ref_candidate['ObsID']
-                            candidate_snapshot = ref_candidate['Snapshot']
-
-                            if candidate_snapshot != 1:
-                                continue
-
-                            ref_dir_check = os.path.dirname(candidate_path)
-                            if not os.path.exists(ref_dir_check):
-                                continue
-
-                            actual_files = os.listdir(ref_dir_check)
-                            ref_base = f"sw{candidate_obsid}{band}_sk"
-
-                            ref_file_found = None
-                            for f in actual_files:
-                                if f.startswith(ref_base):
-                                    ref_file_found = f
-                                    break
-
-                            if ref_file_found:
-                                suitable_ref = {
-                                    'obsid': candidate_obsid,
-                                    'snapshot': 1,
-                                    'full_path': os.path.join(ref_dir_check, ref_file_found),
-                                    'dir': ref_dir_check
-                                }
-                                print(f"    Using fallback reference: ObsID {candidate_obsid}, "
-                                      f"Extension 1 (for obs ext {obs_snapshot})")
-                                break
 
                     # If no reference found at all, we can't correct that.
                     if suitable_ref is None:
@@ -5489,6 +5122,8 @@ def setup_data_directories():
     print("  1. Yes - I have existing data already downloaded")
     print("  2. No - I want to download data for one new target")
     print("  3. BATCH - I have a CSV/TXT list of targets to download and process")
+    print("  4. BATCH DOWNLOAD-ONLY - CSV list: download only, skip processing")
+    print("  5. BATCH PROCESS-ONLY  - CSV list: skip download, process existing data")
     print()
     print(" [Batch input file format]")
     print(" The file must have a header row with these columns")
@@ -5497,23 +5132,34 @@ def setup_data_directories():
     print(" RA        (or: RA_deg, RA_obj, Right_Ascension)   in degrees")
     print(" Dec       (or: De, Dec_deg, De_obj, Declination)  in degrees")
     print(" Radius    (or: Search_Radius, R)  in degrees [OPTIONAL]")
+    print(" Threshold (or: Detect_Threshold, Sigma)   sigma [OPTIONAL]")
+    print(f" If no Threshold column is given, {DEFAULT_DETECT_THRESHOLD} sigma is used.")
     print(f" If no Radius column is given, {DEFAULT_SEARCH_RADIUS} deg is used.")
     print(" 3' will taget only observation directly targeting your source, while above 3' adds nearby targets")
     print(" with 15' you will begin adding targets where the source is on the edge with 17' being the whole FOV of the instrument.")
     print(" .csv = comma-separated, .txt = tab-separated. Auto-detected.")
 
     while True:
-        choice = input("\nEnter your choice (1, 2, or 3): ").strip()
-        if choice in ['1', '2', '3']:
+        choice = input("\nEnter your choice (1, 2, 3, 4, or 5): ").strip()
+        if choice in ['1', '2', '3', '4', '5']:
             break
         print("Invalid choice.")
 
-    # Handle batch mode by short-circuiting into the batch runner
+    # Handle batch modes by going into the batch runner
     if choice == '3':
-        print("\n--- BATCH MODE ---")
-        print("Switching to batch processing...")
-        # Return special flag so run_uvot_pipeline knows to call the batch runner
-        return {'_batch_mode': True}
+        print("\n--- BATCH FULL MODE ---")
+        return {'_batch_mode': True, '_batch_mode_type': 'full'}
+    elif choice == '4':
+        print("\n--- BATCH DOWNLOAD-ONLY MODE ---")
+        print("This mode will only download data. Processing can be run later")
+        print("using BATCH PROCESS-ONLY with the same CSV.")
+        return {'_batch_mode': True, '_batch_mode_type': 'download'}
+    elif choice == '5':
+        print("\n--- BATCH PROCESS-ONLY MODE ---")
+        print("This mode assumes data is already downloaded in subfolders")
+        print("named exactly like the CSV's Target column. Pipeline will skip")
+        print("download and run cleanup → photometry on each target.")
+        return {'_batch_mode': True, '_batch_mode_type': 'process'}
 
     # Initialize Tkinter for file dialogs
     root = tk.Tk()
@@ -5741,7 +5387,7 @@ master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type'
 
 
 
-def clean_up_data(automation_mode=False, base_path=None, save_path=None):
+def clean_up_data(automation_mode=False, base_path=None, save_path=None, detect_threshold=3.0):
     """  
         automation_mode : If True, skips GUI and print statements, returns data
         base_path : Required if automation_mode=True
@@ -5822,7 +5468,7 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None):
     if not automation_mode:
         print("\n=== Running UVOT Detect ===")
     try:
-        batch_run_uvotdetect(base_path)
+        batch_run_uvotdetect(base_path, threshold=detect_threshold)
     except Exception as e:
         print(f" UVOTDETECT failed: {e}")
         if not automation_mode:
@@ -6007,3 +5653,635 @@ def _run_quarantine(data_dir, obs_table):
                 pass
 
 
+
+
+
+
+########################################## 
+# Light Curve Generating Function
+
+def plot_uvot_lightcurves(
+    bands_to_plot=None,
+    xlim=(54000, 61000),
+    excel_file=r"C:\Users\05ble\OneDrive\Desktop\UVOT2 - Orphan Testing 3\master_photometry.txt",
+    ogle_file=r"C:/Users/05ble/OneDrive/Desktop/BEXRAY Stuff/CSV and Data/SXP5_05Ogle_clean.csv", #These are artifacts from my code I use, that I kept Incase I wanted to use them
+    xrt_files={"XRT": r"C:/Users/05ble/OneDrive/Desktop/BEXRAY Stuff/CSV and Data/XRT/SC1966_XRT.csv",
+            "XRT_UL": r"C:/Users/05ble/OneDrive/Desktop/BEXRAY Stuff/CSV and Data/XRT/SC1966_XRT_UL.csv",
+            "XRT_TOO": r"C:/Users/05ble/OneDrive/Desktop/BEXRAY Stuff/CSV and Data/XRT/SC1966_XRT_TOO.csv",
+            "XRT_WT": r"C:/Users/05ble/OneDrive/Desktop/BEXRAY Stuff/CSV and Data/XRT/SC1966_XRT_TOO_WT.csv"},
+    overlay_plot=True,
+    stacked_plot=True,
+    save_prefix=None,
+    Upperlimits=False,
+):
+
+    """
+    Plot UVOT + OGLE magnitudes and XRT count rates.
+
+    Parameters You Can Set!
+    ----------
+    bands_to_plot : list, "auto", or None
+        Which UVOT bands to plot.  None = all 6 defaults.
+        Single-element list like ["uw1"] enables 3-sigma lines.
+        "auto" = plot whatever bands exist in the data.
+    xlim : tuple
+        (min_MJD, max_MJD) for the x-axis.
+    excel_file : str
+        Path to master_photometry.txt (tab-separated) or .csv.
+    ogle_file : str or None
+        Path to OGLE CSV.  None = no OGLE data plotted.
+    xrt_files : dict or None
+        Dictionary of {"label": "filepath"} for XRT CSVs.
+        Pass whatever you have — e.g. just {"XRT": "path.csv"} is fine.
+        Labels containing "UL" are treated as upper limits.
+        None = no XRT data plotted.
+    overlay_plot : bool
+        Produce the combined overlay plot.
+    stacked_plot : bool
+        Produce the 3-panel stacked plot.
+    save_prefix : str or None
+        If set, saves PNGs with this prefix.
+    Upperlimits : bool
+        If True, draw non-detection upper limits as open downward
+        triangles (in each band's colour) on both plots.  If False,
+        upper limits are ignored entirely.  Default False.
+    """
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from astropy.time import Time
+
+    default_bands = ["uvv", "ubb", "uuu", "uw1", "uw2", "um2"]
+    mag_col = 'AB_MAG'
+    mag_err_col = 'AB_MAG_ERR'
+
+    ##########################################################################
+    # LOAD UVOT PHOTOMETRY DATA
+    ##########################################################################
+    if excel_file is None:
+        print("ERROR: excel_file parameter is required.")
+        return
+
+    print(f"Loading UVOT data from: {excel_file}")
+    if excel_file.lower().endswith(".csv"):
+        df = pd.read_csv(excel_file)
+    else:
+        df = pd.read_csv(excel_file, sep='\t')
+
+    ##########################################################################
+    # BUILD MJD COLUMN
+    # The pipeline's UVOT_Data_Analysis.xlsx may or may not have DATE_TAG.
+    # uvotsource FITS output includes TSTART (MET seconds) which gets
+    # carried into the Excel/CSV. We try multiple ways to get a time:
+    #   1. If MJD column already exists, use it
+    #   2. If TSTART exists (Swift MET), convert to MJD
+    #   3. If DATE_TAG exists and is parseable, convert to MJD
+    #   4. If a column name contains "mjd" or "time", try that
+    ##########################################################################
+    if 'MJD' in df.columns:
+        df['MJD'] = pd.to_numeric(df['MJD'], errors='coerce')
+        df = df[df['MJD'].notna()]
+        print(f"  Using existing MJD column ({len(df)} rows)")
+
+    elif 'TSTART' in df.columns:
+        # TSTART is Swift Mission Elapsed Time (seconds since 2001-01-01 UTC)
+        # Convert to MJD: MJD = TSTART/86400 + 51910.0
+        # (51910.0 is the MJD of the Swift reference epoch 2001-01-01T00:00:00)
+        df['TSTART'] = pd.to_numeric(df['TSTART'], errors='coerce')
+        df = df[df['TSTART'].notna()]
+        df['MJD'] = df['TSTART'] / 86400.0 + 51910.0
+        print(f"  Converted TSTART → MJD ({len(df)} rows)")
+
+    elif 'DATE_TAG' in df.columns:
+        df['OBS_DATE'] = pd.to_datetime(
+            df['DATE_TAG'], errors='coerce', format='%Y-%m-%d_%H-%M-%S'
+        )
+        df = df[pd.notnull(df['OBS_DATE'])]
+        if len(df) > 0:
+            df['MJD'] = Time(df['OBS_DATE']).mjd
+            print(f"  Converted DATE_TAG → MJD ({len(df)} rows)")
+        else:
+            print("ERROR: DATE_TAG column exists but no dates could be parsed.")
+            return
+    else:
+        # Last resort: look for any column with "mjd" or "time" in the name
+        found = None
+        for c in df.columns:
+            if 'mjd' in c.lower() or 'time' in c.lower():
+                found = c
+                break
+        if found:
+            df['MJD'] = pd.to_numeric(df[found], errors='coerce')
+            df = df[df['MJD'].notna()]
+            print(f"  Using column '{found}' as MJD ({len(df)} rows)")
+        else:
+            print("ERROR: Cannot find a time column (MJD, TSTART, or DATE_TAG).")
+            return
+
+    if len(df) == 0:
+        print("ERROR: No data remaining after time conversion.")
+        return
+
+    ##########################################################################
+    # FIND MAGNITUDE COLUMNS
+    ##########################################################################
+    # uvotsource FITS output column names can vary depending on how astropy
+    # reads them. The names are normally: AB_MAG, AB_MAG_ERR, AB_FLUX, AB_FLUX_ERR,
+    # RATE, RATE_ERR, etc. 
+
+    # Search for magnitude column.  Exclude 'lim' so we don't accidentally
+    # grab AB_MAG_LIM as the detection magnitude.
+    if mag_col not in df.columns:
+        mag_col_actual = None
+        for pattern in ['ab_mag', 'mag']:
+            for c in df.columns:
+                cl = c.lower().replace(' ', '_')
+                if pattern in cl and 'err' not in cl and 'flux' not in cl and 'lim' not in cl:
+                    mag_col_actual = c
+                    break
+            if mag_col_actual:
+                break
+        if mag_col_actual is None:
+            print(f"ERROR: Cannot find a magnitude column. Available: {list(df.columns)}")
+            return
+        mag_col = mag_col_actual
+        print(f"  Using '{mag_col}' as magnitude column")
+
+    # Search for magnitude error column
+    if mag_err_col not in df.columns:
+        mag_err_col_actual = None
+        for pattern_pair in [('ab_mag', 'err'), ('mag', 'err')]:
+            for c in df.columns:
+                cl = c.lower().replace(' ', '_')
+                if pattern_pair[0] in cl and pattern_pair[1] in cl:
+                    mag_err_col_actual = c
+                    break
+            if mag_err_col_actual:
+                break
+        if mag_err_col_actual is None:
+            print(f"WARNING: Cannot find magnitude error column. Setting errors to 0.")
+            print(f"  Available columns: {list(df.columns)}")
+            df['_ERR'] = 0.0
+            mag_err_col = '_ERR'
+        else:
+            mag_err_col = mag_err_col_actual
+            print(f"  Using '{mag_err_col}' as magnitude error column")
+
+    df[mag_col] = pd.to_numeric(df[mag_col], errors='coerce')
+    df[mag_err_col] = pd.to_numeric(df[mag_err_col], errors='coerce')
+
+    ##########################################################################
+    # IDENTIFY BAND COLUMN
+    ##########################################################################
+    band_col_name = 'BAND'
+    if band_col_name not in df.columns:
+        for c in df.columns:
+            if 'band' in c.lower() or 'filter' in c.lower():
+                band_col_name = c
+                break
+
+    ##########################################################################
+    # IDENTIFY UPPER-LIMIT COLUMNS (written by the pipeline)
+    #   UpperLimit  : flag, True for non-detection rows
+    #   AB_MAG_LIM  : the 3-sigma limiting magnitude (plotted for ULs)
+    #   PLOT_MAG    : pipeline convenience col (= AB_MAG_LIM for ULs) — fallback
+    ##########################################################################
+    ul_col = None
+    for c in df.columns:
+        if c.lower().replace(' ', '').replace('_', '') == 'upperlimit':
+            ul_col = c
+            break
+
+    ul_mag_col = None
+    for cand in ['AB_MAG_LIM', 'PLOT_MAG', 'MAG_LIM']:
+        if cand in df.columns:
+            ul_mag_col = cand
+            break
+    if ul_mag_col is None:  # fuzzy fallback
+        for c in df.columns:
+            cl = c.lower().replace(' ', '_')
+            if 'mag' in cl and 'lim' in cl:
+                ul_mag_col = c
+                break
+    if ul_mag_col is not None:
+        df[ul_mag_col] = pd.to_numeric(df[ul_mag_col], errors='coerce')
+
+    def _is_truthy(v):
+        return str(v).strip().lower() in ('true', '1', 'yes', 't')
+
+    ##########################################################################
+    # SPLIT DETECTIONS FROM UPPER LIMITS
+    # The cleaning below is designed for detections.  Upper-limit rows carry
+    # AB_MAG=99 and have no meaningful error, so we set them aside FIRST and
+    # never run them through the detection cleaning (otherwise they'd be
+    # dropped or mangled).
+    ##########################################################################
+    if ul_col is not None:
+        is_ul_mask = df[ul_col].apply(_is_truthy)
+        det_df = df[~is_ul_mask].copy()
+        ul_df = df[is_ul_mask].copy()
+    else:
+        det_df = df.copy()
+        ul_df = df.iloc[0:0].copy()  # empty
+        if Upperlimits:
+            print("  NOTE: Upperlimits=True but no 'UpperLimit' column found "
+                  "in the data — nothing to plot as upper limits.")
+
+    ##########################################################################
+    # BASIC QUALITY CLEANING (detections only)
+    ##########################################################################
+    det_df = det_df[np.isfinite(det_df[mag_col]) & np.isfinite(det_df[mag_err_col])]
+    det_df = det_df[det_df[mag_err_col] <= 0.35 * det_df[mag_col].abs()]
+
+    det_df.sort_values('MJD', inplace=True)
+    merged = det_df
+
+    if Upperlimits and ul_mag_col is not None and not ul_df.empty:
+        ul_df = ul_df[np.isfinite(ul_df[ul_mag_col])]
+        ul_df.sort_values('MJD', inplace=True)
+
+    print(f"  After quality cleaning: {len(merged)} detections"
+          + (f", {len(ul_df)} upper limits" if Upperlimits else ""))
+
+    ##########################################################################
+    # LOAD OGLE DATA (optional)
+    ##########################################################################
+    ogle_df = None
+    if ogle_file is not None:
+        try:
+            ogle_df = pd.read_csv(ogle_file)
+            if 'HJD' in ogle_df.columns:
+                ogle_df['MJD'] = ogle_df['HJD'] - 2400000
+            ogle_df[band_col_name] = 'OGLE'
+
+            # Rename mag columns to match UVOT names
+            # OGLE typically has "Magnitude" and "Magnitude_Error"
+            # We need to rename them to whatever mag_col / mag_err_col are
+            ogle_mag_col = None
+            ogle_err_col = None
+            for c in ogle_df.columns:
+                cl = c.lower()
+                # Find the magnitude column (but not the error column)
+                if 'magnitude' in cl and 'error' not in cl and 'err' not in cl:
+                    ogle_mag_col = c
+                # Find the error column
+                elif 'error' in cl or ('err' in cl and 'mag' in cl):
+                    ogle_err_col = c
+            # Fallback: try simpler patterns
+            if ogle_mag_col is None:
+                for c in ogle_df.columns:
+                    if 'mag' in c.lower() and 'err' not in c.lower():
+                        ogle_mag_col = c
+                        break
+            if ogle_err_col is None:
+                for c in ogle_df.columns:
+                    if 'err' in c.lower():
+                        ogle_err_col = c
+                        break
+
+            if ogle_mag_col and ogle_mag_col != mag_col:
+                ogle_df.rename(columns={ogle_mag_col: mag_col}, inplace=True)
+            if ogle_err_col and ogle_err_col != mag_err_col:
+                ogle_df.rename(columns={ogle_err_col: mag_err_col}, inplace=True)
+
+            # Verify the rename worked
+            if mag_col not in ogle_df.columns or mag_err_col not in ogle_df.columns:
+                print(f"  WARNING: OGLE columns could not be mapped. "
+                      f"Has: {list(ogle_df.columns)}")
+                print(f"  Need: '{mag_col}' and '{mag_err_col}'")
+                ogle_df = None
+            else:
+                print(f"  OGLE: {len(ogle_df)} data points")
+        except Exception as e:
+            print(f"  WARNING: Could not load OGLE file: {e}")
+            ogle_df = None
+
+    ##########################################################################
+    # LOAD XRT DATA (optional,)
+    ##########################################################################
+    def find_col(df_cols, name_sub):
+        for c in df_cols:
+            if name_sub.lower() in c.lower():
+                return c
+        return None
+
+    xrt_list = []
+    if xrt_files is not None:
+        for label, path in xrt_files.items():
+            try:
+                xdf = pd.read_csv(path)
+            except Exception as e:
+                print(f"  WARNING: could not read {label} ({path}): {e}")
+                continue
+
+            mjd_c = find_col(xdf.columns, 'mjd')
+            rate_c = find_col(xdf.columns, 'count rate')
+            err_pos_c = find_col(xdf.columns, 'positive')
+            err_neg_c = find_col(xdf.columns, 'negative')
+
+            if mjd_c is None or rate_c is None:
+                if xdf.shape[1] >= 2:
+                    mjd_c = xdf.columns[0]
+                    rate_c = xdf.columns[1]
+                else:
+                    print(f"  Skipping {label}: Cannot identify columns.")
+                    continue
+
+            # Upper limits if label contains "UL" or all errors are 0
+            is_ul = 'UL' in label.upper()
+            if not is_ul and err_pos_c and err_neg_c:
+                if xdf[err_pos_c].fillna(0).abs().max() == 0:
+                    is_ul = True
+
+            temp = pd.DataFrame()
+            temp['MJD (days)'] = pd.to_numeric(xdf[mjd_c], errors='coerce')
+
+            if is_ul:
+                temp['Count_Rate_UL'] = pd.to_numeric(xdf[rate_c], errors='coerce')
+                temp['Type'] = 'UL'
+                temp = temp.dropna(subset=['MJD (days)', 'Count_Rate_UL'])
+            else:
+                temp['Count Rate (counts per second)'] = pd.to_numeric(xdf[rate_c], errors='coerce')
+                temp['Count Rate Positive Error'] = (
+                    pd.to_numeric(xdf[err_pos_c], errors='coerce').abs() if err_pos_c else np.nan
+                )
+                temp['Count Rate Negative Error'] = (
+                    pd.to_numeric(xdf[err_neg_c], errors='coerce').abs() if err_neg_c else np.nan
+                )
+                temp['Type'] = 'Normal'
+                temp = temp.dropna(subset=['MJD (days)', 'Count Rate (counts per second)'])
+
+            temp['Label'] = label
+            xrt_list.append(temp)
+            print(f"  {label}: {len(temp)} data points")
+
+    xrt_all = pd.concat(xrt_list, ignore_index=True, sort=False) if xrt_list else pd.DataFrame()
+
+    ##########################################################################
+    # DETERMINE BANDS TO PLOT
+    ##########################################################################
+    if bands_to_plot is None:
+        plot_bands = default_bands.copy()
+    elif bands_to_plot == 'auto':
+        plot_bands = list(merged[band_col_name].str.lower().unique())
+    else:
+        plot_bands = [b.lower() for b in bands_to_plot]
+
+    # If a band only has upper limits (no surviving detections) it would be
+    # missing from 'auto'/None — add those bands so their ULs can show.
+    if (Upperlimits and not ul_df.empty
+            and (bands_to_plot is None or bands_to_plot == 'auto')):
+        for b in ul_df[band_col_name].str.lower().unique():
+            if b not in plot_bands and b != 'ogle':
+                plot_bands.append(b)
+
+    if ogle_df is not None and 'OGLE' not in [b.upper() for b in plot_bands]:
+        plot_bands.append('OGLE')
+
+    cmap = plt.get_cmap('tab10')
+    band_colors = {b: cmap(i % 10) for i, b in enumerate(plot_bands)}
+
+    ##########################################################################
+    # 3-SIGMA CALCULATION (single UVOT band only)
+    ##########################################################################
+    show_sigma3 = False
+    sigma3_band = None
+    sigma3_mean_mag = None
+    sigma3_upper = None
+    sigma3_lower = None
+
+    if (bands_to_plot is not None
+            and bands_to_plot != 'auto'
+            and isinstance(bands_to_plot, list)
+            and len(bands_to_plot) == 1
+            and bands_to_plot[0].lower() != 'ogle'):
+
+        sigma3_band = bands_to_plot[0]
+        band_data = merged[merged[band_col_name].str.lower() == sigma3_band.lower()]
+        band_data = band_data[(band_data['MJD'] >= xlim[0]) & (band_data['MJD'] <= xlim[1])]
+
+        if len(band_data) > 0:
+            mean_mag = band_data[mag_col].mean()
+            mean_err = band_data[mag_err_col].abs().mean()
+
+            sigma3_mean_mag = mean_mag
+            sigma3_upper = mean_mag + 3 * mean_err
+            sigma3_lower = mean_mag - 3 * mean_err
+            show_sigma3 = True
+
+            outside = band_data[
+                (band_data[mag_col] < sigma3_lower) | (band_data[mag_col] > sigma3_upper)
+            ]
+            print(f"\n── 3σ Summary for {sigma3_band.upper()} "
+                  f"(MJD {xlim[0]}–{xlim[1]}) ──")
+            print(f"  N points       : {len(band_data)}")
+            print(f"  Mean AB_MAG    : {mean_mag:.4f}")
+            print(f"  Mean AB_MAG_ERR: {mean_err:.4f}")
+            print(f"  3σ range       : [{sigma3_lower:.4f}, {sigma3_upper:.4f}]")
+            print(f"  Points outside : {len(outside)} / {len(band_data)}"
+                  f"  ({100 * len(outside) / len(band_data):.1f}%)\n")
+
+    def draw_sigma3_lines(ax):
+        if not show_sigma3:
+            return
+        ax.axhline(sigma3_mean_mag, color='gray', linestyle='--',
+                    linewidth=1.2, label=f'Mean ({sigma3_mean_mag:.2f})')
+        ax.axhline(sigma3_upper, color='red', linestyle='-.',
+                    linewidth=1.0, label=f'+3σ ({sigma3_upper:.2f})')
+        ax.axhline(sigma3_lower, color='blue', linestyle='-.',
+                    linewidth=1.0, label=f'−3σ ({sigma3_lower:.2f})')
+        ax.axhspan(sigma3_lower, sigma3_upper, color='gray', alpha=0.08,
+                    label='3σ region')
+
+    ##########################################################################
+    # UPPER-LIMIT DRAWING HELPER
+    # Open downward triangles in each band's colour, no error bars.  This is
+    # the standard convention for "the source was at most this bright."
+    ##########################################################################
+    def draw_upper_limits(ax):
+        if not Upperlimits or ul_mag_col is None or ul_df.empty:
+            return
+        for band in plot_bands:
+            if band.lower() == 'ogle':
+                continue
+            sub = ul_df[ul_df[band_col_name].str.lower() == band.lower()]
+            if len(sub) == 0:
+                continue
+            ax.scatter(
+                sub['MJD'], sub[ul_mag_col],
+                marker='v', s=55,
+                facecolors='none',
+                edgecolors=band_colors.get(band, 'gray'),
+                linewidths=1.2,
+                label=f'{band} (UL)'
+            )
+
+    ##########################################################################
+    # OVERLAY PLOT
+    ##########################################################################
+    if overlay_plot:
+        fig, ax_mag = plt.subplots(figsize=(16, 6))
+
+        for band in plot_bands:
+            if band == 'OGLE':
+                sub = ogle_df
+            else:
+                sub = merged[merged[band_col_name].str.lower() == band.lower()]
+
+            if sub is None or len(sub) == 0:
+                continue
+
+            mags = sub[mag_col].values
+            errs = np.abs(sub[mag_err_col].values)
+
+            ax_mag.errorbar(
+                sub['MJD'], mags, yerr=[errs, errs],
+                fmt='o', linestyle='none', capsize=2,
+                label=band, markersize=4,
+                color=band_colors.get(band, None)
+            )
+
+        draw_sigma3_lines(ax_mag)
+        draw_upper_limits(ax_mag)
+
+        # XRT on right axis if available
+        if not xrt_all.empty:
+            ax_xrt = ax_mag.twinx()
+
+            normal = xrt_all[xrt_all['Type'] == 'Normal']
+            if not normal.empty:
+                ax_xrt.errorbar(
+                    normal['MJD (days)'],
+                    normal['Count Rate (counts per second)'],
+                    yerr=[normal['Count Rate Negative Error'].fillna(0).values,
+                          normal['Count Rate Positive Error'].fillna(0).values],
+                    fmt='s', linestyle='none', capsize=2, markersize=4,
+                    color='black', label='XRT'
+                )
+
+            ul = xrt_all[xrt_all['Type'] == 'UL']
+            if not ul.empty:
+                ax_xrt.scatter(
+                    ul['MJD (days)'], ul['Count_Rate_UL'],
+                    marker='v', facecolors='none', edgecolors='black',
+                    s=60, label='XRT UL'
+                )
+
+            ax_xrt.set_ylabel('Count Rate (counts/s)')
+
+            h1, l1 = ax_mag.get_legend_handles_labels()
+            h2, l2 = ax_xrt.get_legend_handles_labels()
+            by_label = dict(zip(l1 + l2, h1 + h2))
+            ax_mag.legend(by_label.values(), by_label.keys(),
+                          ncol=3, title='Band/Series')
+        else:
+            ax_mag.legend(ncol=3, title='Band')
+
+        ax_mag.set_xlabel('MJD')
+        ax_mag.set_ylabel('AB Magnitude')
+        ax_mag.invert_yaxis()
+        ax_mag.set_xlim(*xlim)
+
+        title_suffix = f' — {sigma3_band.upper()} with 3σ' if show_sigma3 else ''
+        ul_suffix = ' + upper limits' if (Upperlimits and not ul_df.empty) else ''
+        ax_mag.set_title(f'UVOT + OGLE (left) and XRT (right){title_suffix}{ul_suffix}')
+        ax_mag.grid(alpha=0.3)
+
+        plt.tight_layout()
+        if save_prefix:
+            fig.savefig(f'{save_prefix}_overlay.png', dpi=200)
+        plt.show()
+
+    ##########################################################################
+    # STACKED PLOT 
+    ##########################################################################
+    if stacked_plot:
+        has_ogle = ogle_df is not None and len(ogle_df) > 0
+        has_xrt = not xrt_all.empty
+
+        n_panels = 1
+        if has_ogle:
+            n_panels += 1
+        if has_xrt:
+            n_panels += 1
+
+        fig, axes = plt.subplots(
+            nrows=n_panels, ncols=1, sharex=True,
+            figsize=(16, 3 * n_panels),
+            gridspec_kw={'height_ratios': [2] * n_panels}
+        )
+
+        if n_panels == 1:
+            axes = [axes]
+
+        panel_idx = 0
+
+        # UVOT panel
+        ax_uvot = axes[panel_idx]
+        for band in plot_bands:
+            if band.lower() == 'ogle':
+                continue
+            sub = merged[merged[band_col_name].str.lower() == band.lower()]
+            if len(sub) == 0:
+                continue
+            ax_uvot.errorbar(
+                sub['MJD'], sub[mag_col],
+                yerr=[sub[mag_err_col].abs(), sub[mag_err_col].abs()],
+                fmt='o', linestyle='none', capsize=2, markersize=4,
+                label=band, color=band_colors.get(band, None)
+            )
+        draw_sigma3_lines(ax_uvot)
+        draw_upper_limits(ax_uvot)
+        ax_uvot.set_ylabel('UVOT AB Mag')
+        ax_uvot.invert_yaxis()
+        ax_uvot.grid(alpha=0.25)
+        ax_uvot.legend(ncol=4)
+        panel_idx += 1
+
+        # OGLE panel (if data exists)
+        if has_ogle:
+            ax_ogle = axes[panel_idx]
+            ax_ogle.errorbar(
+                ogle_df['MJD'], ogle_df[mag_col],
+                yerr=[ogle_df[mag_err_col].abs(), ogle_df[mag_err_col].abs()],
+                fmt='o', linestyle='none', capsize=2, markersize=4,
+                color='black', label='OGLE'
+            )
+            ax_ogle.set_ylabel('OGLE Mag')
+            ax_ogle.invert_yaxis()
+            ax_ogle.grid(alpha=0.25)
+            ax_ogle.legend()
+            panel_idx += 1
+
+        # XRT panel (if data exists)
+        if has_xrt:
+            ax_xrt_ax = axes[panel_idx]
+            normal = xrt_all[xrt_all['Type'] == 'Normal']
+            if not normal.empty:
+                ax_xrt_ax.errorbar(
+                    normal['MJD (days)'],
+                    normal['Count Rate (counts per second)'],
+                    yerr=[normal['Count Rate Negative Error'].fillna(0).abs().values,
+                          normal['Count Rate Positive Error'].fillna(0).abs().values],
+                    fmt='s', linestyle='none', capsize=2, markersize=4,
+                    color='darkred', label='XRT'
+                )
+            ul = xrt_all[xrt_all['Type'] == 'UL']
+            if not ul.empty:
+                ax_xrt_ax.scatter(
+                    ul['MJD (days)'], ul['Count_Rate_UL'],
+                    marker='v', s=60, facecolors='none', edgecolors='black',
+                    label='UL'
+                )
+            ax_xrt_ax.set_ylabel('Counts/s')
+            ax_xrt_ax.grid(alpha=0.25)
+            ax_xrt_ax.legend()
+
+        axes[-1].set_xlabel('MJD')
+        axes[-1].set_xlim(*xlim)
+
+        plt.tight_layout()
+        if save_prefix:
+            fig.savefig(f'{save_prefix}_stacked.png', dpi=200)
+        plt.show()
