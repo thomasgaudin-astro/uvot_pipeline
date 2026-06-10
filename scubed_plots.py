@@ -22,7 +22,7 @@ def plot_uvot_lc(source_name, uvot_data):
     ax.set_title(f'{source_name}', fontsize=16)
     ax.tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/UVOT_plots/{source_name}_uvot_lc.pdf', bbox_inches='tight')
+    plt.savefig(f'../Plots/UVOT_plots/{source_name}_uvot_lc.pdf', bbox_inches='tight')
 
 def plot_ogle_lc(source_name, ogle_data):
 
@@ -38,7 +38,7 @@ def plot_ogle_lc(source_name, ogle_data):
     ax.set_title(f'{source_name}', fontsize=16)
     ax.tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/OGLE_plots/{source_name}_ogle_lc.pdf', bbox_inches='tight')
+    plt.savefig(f'../Plots/OGLE_plots/{source_name}_ogle_lc.pdf', bbox_inches='tight')
 
 def plot_ogle_uvot_lc(source_name, ogle_data, uvot_data):
 
@@ -65,7 +65,7 @@ def plot_ogle_uvot_lc(source_name, ogle_data, uvot_data):
     ax[1].set_xlabel('MJD', fontsize=14)
     ax[1].tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/OGLE_UVOT_plots/{source_name}_ogle_uvot_lc.pdf', bbox_inches='tight')
+    plt.savefig(f'../Plots/OGLE_UVOT_plots/{source_name}_ogle_uvot_lc.pdf', bbox_inches='tight')
 
 def plot_trunc_ogle_uvot_lc(source_name, truncated_ogle_data, uvot_data):
 
@@ -92,7 +92,7 @@ def plot_trunc_ogle_uvot_lc(source_name, truncated_ogle_data, uvot_data):
     ax[1].set_xlabel('MJD', fontsize=14)
     ax[1].tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/Trunc_OGLE_UVOT_plots/{source_name}_trunc_ogle_uvot_lc.pdf', bbox_inches='tight')
+    plt.savefig(f'../Plots/Trunc_OGLE_UVOT_plots/{source_name}_trunc_ogle_uvot_lc.pdf', bbox_inches='tight')
 
 def plot_xrt_lc_ul(source_name, xrt_data, xrt_ul_data, ymin=0):
     
@@ -125,7 +125,7 @@ def plot_xrt_lc_ul(source_name, xrt_data, xrt_ul_data, ymin=0):
     ax.set_title(f'{source_name}', fontsize=16)
     ax.tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/XRT_plots/{source_name}_xrt_lc.pdf', bbox_inches="tight")
+    plt.savefig(f'../Plots/XRT_plots/{source_name}_xrt_lc.pdf', bbox_inches="tight")
 
 def plot_uvot_xrt_lc_ul(source_name, uvot_data, xrt_data, xrt_ul_data, ymin=0):
     
@@ -167,7 +167,7 @@ def plot_uvot_xrt_lc_ul(source_name, uvot_data, xrt_data, xrt_ul_data, ymin=0):
     ax[1].set_xlabel('MJD', fontsize=14)
     ax[1].tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/UVOT_XRT_plots/{source_name}_uvot_xrt_lc.pdf', bbox_inches="tight")
+    plt.savefig(f'../Plots/UVOT_XRT_plots/{source_name}_uvot_xrt_lc.pdf', bbox_inches="tight")
 
 def plot_ogle_xrt_lc_ul(source_name, ogle_data, xrt_data, xrt_ul_data, ymin=0):
     
@@ -209,7 +209,7 @@ def plot_ogle_xrt_lc_ul(source_name, ogle_data, xrt_data, xrt_ul_data, ymin=0):
     ax[1].set_xlabel('MJD', fontsize=14)
     ax[1].tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/OGLE_XRT_plots/{source_name}_ogle_xrt_lc.pdf', bbox_inches="tight")
+    plt.savefig(f'../Plots/OGLE_XRT_plots/{source_name}_ogle_xrt_lc.pdf', bbox_inches="tight")
 
 def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul_data, ymin=0):
     
@@ -260,7 +260,7 @@ def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul
     ax[2].set_xlabel('MJD', fontsize=14)
     ax[2].tick_params(labelsize=14)
 
-    plt.savefig(f'./Plots/OGLE_UVOT_XRT_plots/{source_name}_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
+    plt.savefig(f'../Plots/OGLE_UVOT_XRT_plots/{source_name}_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
 
 def plot_trunc_ogle_uvot_xrt_lc_ul(source_name, truncated_ogle_data, uvot_data, xrt_data, xrt_ul_data, ymin=0):
     
@@ -313,4 +313,4 @@ def plot_trunc_ogle_uvot_xrt_lc_ul(source_name, truncated_ogle_data, uvot_data, 
 
     fig.align_ylabels()
 
-    plt.savefig(f'./Plots/Trunc_OGLE_UVOT_XRT_plots/{source_name}_trunc_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
+    plt.savefig(f'../Plots/Trunc_OGLE_UVOT_XRT_plots/{source_name}_trunc_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
