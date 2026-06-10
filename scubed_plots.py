@@ -229,7 +229,7 @@ def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul
 
     ax[0].invert_yaxis()
 
-    ax[0].set_ylabel('I-band Mag', fontsize=14)
+    ax[0].set_ylabel('I Mag', fontsize=14)
     ax[0].set_xlabel('MJD', fontsize=14)
     ax[0].set_title(f'{source_name}', fontsize=16)
     ax[0].tick_params(labelsize=14)
@@ -239,7 +239,7 @@ def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul
 
     ax[1].invert_yaxis()
 
-    ax[1].set_ylabel('UVW1-band Mag', fontsize=14)
+    ax[1].set_ylabel('UVW1 Mag', fontsize=14)
     ax[1].set_xlabel('MJD', fontsize=14)
     ax[1].tick_params(labelsize=14)
 
@@ -255,10 +255,12 @@ def plot_ogle_uvot_xrt_lc_ul(source_name, ogle_data, uvot_data, xrt_data, xrt_ul
 
     ax[2].scatter(xrt_ul_data['MJD'], xrt_ul_data['CR'], marker='_', c='plum', zorder=1)
 
-    ax[2].set_ylabel('XRT Count Rate (counts/s)', fontsize=14)
+    ax[2].set_ylabel('XRT Count Rate'+ '\n' + '(counts/s)', fontsize=14)
     ax[2].set_ylim(min_xrt_val-0.03, max_val+0.03)
     ax[2].set_xlabel('MJD', fontsize=14)
     ax[2].tick_params(labelsize=14)
+
+    fig.align_ylabels()
 
     plt.savefig(f'./Plots/OGLE_UVOT_XRT_plots/{source_name}_ogle_uvot_xrt_lc.pdf', bbox_inches="tight")
 
