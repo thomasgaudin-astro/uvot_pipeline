@@ -508,6 +508,8 @@ def _process_one_field_group(group, parent_dir, manual_aspect_correction,
                     run_allframes=bool(t.get('AllFrames', RUN_ALLFRAMES)),
                     run_timeavg=bool(t.get('TimeAvg', RUN_TIMEAVG)),
                     finder_fov=(float(t['FinderFOV']) if pd.notna(t.get('FinderFOV', float('nan'))) else None),
+                    centroid=bool(t.get('Centroid', True)),
+                    centroid_radius=(float(t['CentroidRadius']) if pd.notna(t.get('CentroidRadius', float('nan'))) else None),
                 )
             status = 'SUCCESS'
         except Exception as e:
@@ -769,7 +771,17 @@ def run_dataInit_batch(batch_file=None, datainit_path=None, dataSRC_path=None,
  
     outcomes = []
     batch_start = time.time()
- 
+
+
+    # SOURCE X ordering: X targets run LAST so their group members' regions
+    # already exist when the counterpart chart overlays them.
+    if 'SourceX' in targets_df.columns and bool(targets_df['SourceX'].any()):
+        _xmask = targets_df['SourceX'] == True
+        targets_df = pd.concat([targets_df[~_xmask], targets_df[_xmask]])
+        print(f" SOURCE X ordering: {int(_xmask.sum())} X target(s) moved "
+              f"to the end of the batch.")
+
+
     tgt_iter = tqdm(list(targets_df.iterrows()), desc="dataInit batch",
                     unit="target",
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
@@ -793,7 +805,18 @@ def run_dataInit_batch(batch_file=None, datainit_path=None, dataSRC_path=None,
                 run_allframes=bool(row.get('AllFrames', RUN_ALLFRAMES)),
                 mode=mode, auto_download=auto_download,
                 run_timeavg=bool(row.get('TimeAvg', RUN_TIMEAVG)),
-                finder_fov=(float(row['FinderFOV']) if pd.notna(row.get('FinderFOV', float('nan'))) else None),) 
+                finder_fov=(float(row['FinderFOV']) if pd.notna(row.get('FinderFOV', float('nan'))) else None),
+                centroid=bool(row.get('Centroid', True)),
+                centroid_radius=(float(row['CentroidRadius']) if pd.notna(row.get('CentroidRadius', float('nan'))) else None),
+                sourcex=bool(row.get('SourceX', False)),
+                counterpart_radius=(float(row['CounterpartRadius']) if pd.notna(row.get('CounterpartRadius', float('nan'))) else None),
+                group_members=([{'name': str(r2['Target']), 'ra': float(r2['RA']), 'dec': float(r2['Dec'])}
+                    for _j2, r2 in targets_df.iterrows()
+                    if (str(row.get('Group', '')).strip() != '' 
+                        and str(r2.get('Group', '')).strip()
+                        == str(row.get('Group', '')).strip()
+                        and not bool(r2.get('SourceX', False)))] 
+                    if bool(row.get('SourceX', False)) else None))
             status = res.get('status', 'UNKNOWN')
             res['Runtime_min'] = round((time.time() - t0) / 60.0, 3)
             outcomes.append(res)
@@ -848,7 +871,8 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
                         retry_orphans=True,
                         retry_uncorr=True,
                         force_retry_failed=False, run_allframes=None, run_timeavg=None, mode='full',
-                        finder_fov=None):
+                        finder_fov=None, centroid=None, centroid_radius=None,
+                        sourcex=False, counterpart_radius=None, group_members=None):
     """
     Process ONE target against the shared dataInit pool, writing per-target
     products to dataSRC/<target>/UVOT/<obsid>/. All pipeline output is logged
@@ -870,7 +894,16 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
     # 'process' = pool-as-is: never fetch, whatever auto_download says.
     if mode == 'process':
         auto_download = False
+    if sourcex:
+        centroid = False   # SOURCE X: coordinates ARE the search center
     ttag = _sanitize_target_name(target)
+    # Per-target observations table (dataInit): its own file under
+    # dataInit/ObsTables/ so it can never clobber the shared pool table
+    # (dataInit/observations_table.csv) or another target's table.
+    _obstables_dir = os.path.join(datainit_path, "ObsTables")
+    os.makedirs(_obstables_dir, exist_ok=True)
+    obstable_out = os.path.join(_obstables_dir, f"observations_table_{ttag}.csv")
+    
     t_uvot = os.path.join(dataSRC_path, ttag, "UVOT")
     os.makedirs(t_uvot, exist_ok=True)
     log_path = os.path.join(t_uvot, "pipeline.log")
@@ -929,12 +962,14 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
         n_skip_permanent = 0
         n_retry_orphan = 0
         n_retry_uncorr = 0
+        n_hollow = 0
         for obsid in needed:
             state = manifest_state_for_obsid(obsid, datainit_path,
                                              manifest_df=manifest_df)
             if state == 'processed' and not pool_has_complete_rows(
                     datainit_path, obsid, pool_df=pool_df):
                 state = 'raw'
+                n_hollow += 1
  
             # freshness check: did the obsid's raw data change since we processed
             # it? (e.g. a re-downlink added a snapshot). Compare the recorded raw-
@@ -987,7 +1022,13 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
               f"skip permanent-fail: {n_skip_permanent} | "
               f"retry orphan: {n_retry_orphan} | "
               f"retry uncorr: {n_retry_uncorr}")
- 
+        if n_hollow:
+            print(f" NOTE: {n_hollow} obsid(s) were marked 'processed' in "
+                  f"the manifest but had NO rows in the pool table, they "
+                  f"were re-classified raw and will be FULLY re-cleaned. "
+                  f"This means the pool table was lost or clobbered (see "
+                  f"pool_observations_table fix); the re-clean is correct "
+                  f"but slow.")
         # Pool generation marker to stamp on this run's (re)classified obsids.
         pool_gen_marker = n_processed_pool + len(raw_obsids)
  
@@ -1002,7 +1043,7 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
             results = clean_up_data(
                 automation_mode=True, base_path=datainit_path,
                 save_path=datainit_path, detect_threshold=detect_threshold,
-                only_obsids=raw_obsids)
+                only_obsids=raw_obsids, obstable_out=obstable_out)
             if results is None or results.get('observations_table') is None:
                 return {'target': target, 'status': 'CLEANUP_FAILED',
                         'n_obsids': len(needed), 'n_cleaned': 0,
@@ -1037,12 +1078,12 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
                 obs_table=fresh_table, base_path=datainit_path,
                 save_path=datainit_path,
                 orphan_solutions=results.get('orphan_solutions'),
-                manual_mode=manual_aspect_correction)
+                manual_mode=manual_aspect_correction, obstable_out=obstable_out)
             _run_quarantine(datainit_path, fresh_table)
             fresh_table = check_sss_before_summation(
                 obs_table=fresh_table, base_path=datainit_path,
                 save_path=datainit_path, target_ra=target_ra,
-                target_dec=target_dec)
+                target_dec=target_dec, obstable_out=obstable_out)
  
             # 5. persist: pool table + manifest
             pool_df = upsert_obsids_into_pool(datainit_path, fresh_table,
@@ -1084,8 +1125,75 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
                     pool_size=pool_gen_marker)
  
         # assemble working table
-        reuse_rows = pool_rows_for_obsids(datainit_path, processed_obsids,
-                                          pool_df=pool_df)
+        reuse_rows = pool_rows_for_obsids(datainit_path, processed_obsids, pool_df=pool_df)
+
+        if processed_obsids and (reuse_rows is None or reuse_rows.empty):
+            print("  " + "!" * 66)
+            print(f" CRITICAL: the pool table has NO rows for the "
+                  f"{len(processed_obsids)} obsid(s) marked 'processed' — "
+                  f"the pool file was overwritten (clobbered) at some "
+                  f"point. Their data CANNOT be reused this run.")
+            print(f" Fix: delete manifest.csv and the pool table in "
+                  f"dataInit and rerun (one-time full re-clean), and "
+                  f"verify the obstable_out patches are installed.")
+            print("  " + "!" * 66)
+        # Pool rows store ABSOLUTE Full_Paths from when they were cleaned.
+        # If the pool folder has since moved/renamed (or the run switched machines),
+        # those paths silently break and the reused obsids drop
+        # out of summation/photometry. Repair each path against the CURRENT
+        # datainit_path, It also loudly report anything unrepairable.
+        if reuse_rows is not None and not reuse_rows.empty \
+                and 'Full_Path' in reuse_rows.columns:
+            def _repair_pool_path(p, obsid):
+                if isinstance(p, str) and p and os.path.exists(p):
+                    return p
+                if not (isinstance(p, str) and p):
+                    return p
+                # OS-agnostic basename: a pool cleaned on Windows stores
+                # backslash paths that POSIX os.path.basename won't split
+                # (it returns the whole string). Normalise both separators.
+                fn = p.replace("\\", "/").split("/")[-1]
+                if not fn:
+                    return p
+                oid = str(obsid)
+                # canonical double-nested, then single-nested layout
+                for cand in (
+                    os.path.join(datainit_path, oid, oid, "uvot", "image", fn),
+                    os.path.join(datainit_path, oid, "uvot", "image", fn),
+                ):
+                    if os.path.exists(cand):
+                        return cand
+                # last resort: exact file may have been cleaned away (only
+                # *_summed survivors left) or nested oddly, locate by name
+                # under this obsid's tree so a moved pool still resolves.
+                obs_root = os.path.join(datainit_path, oid)
+                if os.path.isdir(obs_root):
+                    for _root, _dirs, _files in os.walk(obs_root):
+                        if fn in _files:
+                            return os.path.join(_root, fn)
+                return p
+            _orig = list(reuse_rows['Full_Path'])
+            reuse_rows = reuse_rows.copy()
+            reuse_rows['Full_Path'] = [
+                _repair_pool_path(p, o) for p, o in
+                zip(reuse_rows['Full_Path'], reuse_rows['ObsID'])]
+            _n_fixed = sum(1 for a, b in zip(_orig, reuse_rows['Full_Path'])
+                           if a != b)
+            if _n_fixed:
+                print(f"  pool paths repaired for the current pool location: "
+                      f"{_n_fixed} row(s)")
+            _bad = sorted(set(
+                str(o) for o, p in zip(reuse_rows['ObsID'], reuse_rows['Full_Path'])
+                if not (isinstance(p, str) and os.path.exists(p))))
+            if _bad:
+                print(f" WARNING: {len(_bad)} reused obsid(s) have files "
+                      f"missing from the pool and will contribute NOTHING "
+                      f"this run: {_bad}")
+                print(f" -> to force a full re-clean of them, delete their "
+                      f"rows from manifest.csv (or delete manifest.csv + "
+                      f"observations_table.csv) and rerun.")
+
+
         parts = [df for df in (fresh_table, reuse_rows)
                  if df is not None and not df.empty]
         if not parts:
@@ -1096,6 +1204,40 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
         work_table = work_table[work_table['ObsID'].astype(str).isin(
             set(str(o) for o in needed))].reset_index(drop=True)
  
+        # input-set change detection
+        # If the set of obsids feeding this target changed since the last
+        # run (new obsids added, old ones gone), the AGGREGATE products are
+        # stale. Masters/plots/product tables rebuild at compile anyway, and
+        # per-obsid finalsource files stay valid, but the TIME-AVERAGED
+        # co-add would be silently kept by its skip-if-exists, so it is
+        # deleted here and rebuilt from the full current set.
+        _inputs_path = os.path.join(t_uvot, "processed_inputs.txt")
+        _now_inputs = sorted(set(work_table['ObsID'].astype(str)))
+        _old_inputs = None
+        if os.path.exists(_inputs_path):
+            try:
+                with open(_inputs_path) as _fh:
+                    _old_inputs = [ln.strip() for ln in _fh
+                                   if ln.strip()]
+            except Exception:
+                _old_inputs = None
+        if _old_inputs is not None and _old_inputs != _now_inputs:
+            _added = sorted(set(_now_inputs) - set(_old_inputs))
+            _gone = sorted(set(_old_inputs) - set(_now_inputs))
+            print(f"  INPUT SET CHANGED since the last run of this target: "
+                  f"+{len(_added)} obsid(s) {_added or ''} "
+                  f"-{len(_gone)} {_gone or ''}")
+            _tavg_dir = os.path.join(t_uvot, "TimeAvg")
+            if os.path.isdir(_tavg_dir):
+                shutil.rmtree(_tavg_dir, ignore_errors=True)
+                print(" removed the stale time-averaged co-adds — they "
+                      "will regenerate from the full current obsid set.")
+        try:
+            with open(_inputs_path, 'w') as _fh:
+                _fh.write("\n".join(_now_inputs) + "\n")
+        except Exception:
+            pass
+
         # 6. shared summation
         image_dirs = run_summation_shared(work_table, datainit_path)
  
@@ -1112,7 +1254,25 @@ def run_dataInit_target(target_ra, target_dec, radius, target,
             persistent_bkg_path=bkg_path,
             run_allframes=run_allframes,
             run_timeavg=run_timeavg,
-            finder_fov=finder_fov)
+            finder_fov=finder_fov,
+            centroid=centroid,
+            centroid_radius=centroid_radius)
+        
+        # SOURCE X / counterpart chart: SIMBAD catalog + zone chart, saved
+        # under dataSRC/<target>/SOURCEX/. Enabled by a CounterpartRadius in
+        # the CSV, or (for X targets) by MAKE_COUNTERPART_CHARTS.
+        _cp_r = counterpart_radius
+        if _cp_r is None and MAKE_COUNTERPART_CHARTS and sourcex:
+            _cp_r = COUNTERPART_DEFAULT_RADIUS_ARCMIN
+        if _cp_r is not None:
+            try:
+                make_counterpart_charts_for_target(
+                    image_dirs=image_dirs, dataSRC_path=dataSRC_path,
+                    target=target, target_ra=target_ra,
+                    target_dec=target_dec, radius_arcmin=float(_cp_r),
+                    group_members=group_members, output_root=t_uvot)
+            except Exception as e:
+                print(f" counterpart chart failed: {str(e)[:160]}")
  
     _cleanup_after_processing(datainit_path, save_root=datainit_path, label=target)
     return {'target': target, 'status': 'SUCCESS',
