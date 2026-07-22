@@ -52,6 +52,8 @@ import matplotlib.ticker as ticker
 from matplotlib.patches import Circle
 from datetime import datetime
 from astropy.visualization import (ImageNormalize, LogStretch, PercentileInterval)
+from astropy.visualization.wcsaxes import SphericalCircle
+from astropy.nddata import Cutout2D
 
 ###############################################################################
 # PLATFORM / HEASOFT CONFIGURATION
@@ -170,6 +172,14 @@ CLEANUP_DELETE_GZ   = True    # also delete _sk.img.gz (keeps corrected .img)
 CLEANUP_DELETE_IMG  = False   # DESTRUCTIVE!!!: strip SK to summed-only. Leave False
                               # unless you KNOW you won't do per-extension work or want.
                               # or need the sk.img.gz or sk.img, if you have summed files.
+# When uvotsource returns AB_MAG=99 it means "could not determine a magnitude"
+# NOT a real detection or a real limit. For a bright source (e.g. a nova at
+# peak) these are hollowed-out saturated cores that would masquerade as faint
+# upper limits and corrupt the light curve, so by default such rows are
+# DROPPED. Set True to instead keep them as upper limits (occasionally useful
+# for borderline-faint frames where a 99 may carry a meaningful limit).
+KEEP_MAG99_AS_LIMIT = False
+
 
 BANDS = ["uvv", "uuu", "ubb", "um2", "uw1", "uw2"] # Bands you want processed 
 QUARANTINE = {"Smeared", "NotASPCORR", "Orphans"} # Dont touch
@@ -200,6 +210,12 @@ _BATCH_COL_ALIASES = {
     'allframes': ['allframes', 'all_frames', 'perframe', 'per_frame'],
     'timeavg': ['timeavg', 'time_avg', 'timeaveraged', 'time_averaged', 'allsummed', 'all_summed'],
     'finderfov': ['finderfov', 'finder_fov', 'fov', 'fov_arcmin', 'finder_zoom'],
+    'centroid': ['centroid', 'centroiding', 'use_centroid', 'recenter'],
+    'centroidradius': ['centroidradius', 'centroid_radius', 'maxoffset', 'max_offset'],
+    'keepmag99': ['keepmag99', 'keep_mag99', 'keep99', 'mag99', 'show99'],
+    'sourcex': ['sourcex', 'source_x', 'srcx', 'is_x'],
+    'group': ['group', 'grp', 'association', 'source_group', 'grb'],
+    'counterpartradius': ['counterpartradius', 'counterpart_radius', 'cpradius', 'cp_radius', 'errorradius', 'error_radius'],
 }
 
 
@@ -341,6 +357,86 @@ def load_batch_targets(filepath):
         out['FinderFOV'] = pd.to_numeric(df[fov_col], errors='coerce')
     else:
         out['FinderFOV'] = float('nan')
+
+    # Per-target centroiding switch. Blank/missing -> ON (default behavior).
+    cent_col = _resolve_column(df, _BATCH_COL_ALIASES['centroid'])
+    if cent_col is not None:
+        def _cent_flag(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return True
+            s = str(v).strip().lower()
+            return True if s == '' else s not in (
+                'false', '0', 'no', 'f', 'n', 'off')
+        out['Centroid'] = df[cent_col].apply(_cent_flag)
+    else:
+        out['Centroid'] = True
+
+    # Per-target centroid search radius (arcsec). Blank -> default 10".
+    crad_col = _resolve_column(df, _BATCH_COL_ALIASES['centroidradius'])
+    if crad_col is not None and crad_col == _resolve_column(
+            df, _BATCH_COL_ALIASES['radius']):
+        # The same physical column also matched the cone-search Radius:
+        # that value is the DEGREES cone radius, not an arcsec centroid
+        # radius. Never let the two share a column.
+        print(f" NOTE: column '{crad_col}' matched both Radius and "
+              f"CentroidRadius — using it as the cone-search Radius only; "
+              f"centroid radius stays at its default.")
+        crad_col = None
+    if crad_col is not None:
+        out['CentroidRadius'] = pd.to_numeric(df[crad_col], errors='coerce')
+    else:
+        out['CentroidRadius'] = float('nan')
+
+    # Keep AB_MAG=99 rows (as limits) instead of dropping them. default KEEP_MAG99_AS_LIMIT
+    k99_col = _resolve_column(df, _BATCH_COL_ALIASES['keepmag99'])
+    if k99_col is not None:
+        def _k99(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return pd.NA
+            s = str(v).strip().lower()
+            if s == '':
+                return pd.NA
+            return s in ('true', '1', 'yes', 't', 'y', 'on')
+        out['KeepMag99'] = df[k99_col].apply(_k99).astype('boolean')
+    else:
+        out['KeepMag99'] = pd.array([pd.NA] * len(out), dtype='boolean')
+
+    # SOURCE X flag: this target is the CENTER of a group of candidate
+    # sources (GRB/XRT workflow). X targets are processed LAST in a batch
+    # and NEVER centroided!!!!!!!!!!!!.
+    sx_col = _resolve_column(df, _BATCH_COL_ALIASES['sourcex'])
+    if sx_col is not None:
+        def _sx_flag(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return False
+            s = str(v).strip().lower()
+            return s in ('true', '1', 'yes', 't', 'y', 'on', 'x')
+        out['SourceX'] = df[sx_col].apply(_sx_flag)
+    else:
+        out['SourceX'] = False
+
+    # Group name tying a SOURCE X to its SOURCE 1..N members (any string;
+    # members share the X's group). Blank = ungrouped.
+    grp_col = _resolve_column(df, _BATCH_COL_ALIASES['group'])
+    if grp_col is not None:
+        out['Group'] = df[grp_col].fillna('').astype(str).str.strip()
+    else:
+        out['Group'] = ''
+
+    # Counterpart-chart zone radius in ARCMIN (e.g. the XRT error radius, or any value).
+    # A value here enables the SIMBAD counterpart chart for the target.
+    cpr_col = _resolve_column(df, _BATCH_COL_ALIASES['counterpartradius'])
+    if cpr_col is not None:
+        out['CounterpartRadius'] = pd.to_numeric(df[cpr_col],
+                                                 errors='coerce')
+    else:
+        out['CounterpartRadius'] = float('nan')
+
+    # SOURCE X targets are never centroided, regardless of the Centroid
+    # column — their coordinates ARE the search center.
+    out.loc[out['SourceX'] == True, 'Centroid'] = False
+
+    
     # Optional Field column. Blank/NaN/missing → empty string, which the
     # grouping treats as "no field" (each such target is its own group).
     # Sanitized the same way target names are, so a field like
@@ -1077,10 +1173,17 @@ def rebuild_manifest_from_disk(datainit_path):
 # Saturated/ASPCORR/Group) so a future target sharing an obsid never re-cleans
 # it. The lightweight manifest is the fast obsid-level index ON TOP of this.
 #
-# Old single-folder pipeline NEVER touches this file, it keeps building its
-# own per-target observations_table.csv exactly as before. Only the dataInit
-# driver reads/writes the pool table, so many new fucntions :<
-POOL_OBSTABLE_NAME = "observations_table.csv"
+# The pool table now has its OWN name: the generic "observations_table.csv"
+# is what several legacy steps write as a per-target working table, and any
+# unpatched writer could clobber the pool. A distinct name makes the pool
+# permanently immune to that entire class of bug.
+POOL_OBSTABLE_NAME = "pool_observations_table.csv"
+
+# Minimum distance (arcsec) from the TARGET at which the background-region
+# spiral search may place a candidate. Raise this for bright/saturated stars
+# whose halo extends well past the default (e.g. 40-60 for a bright nova) so
+# the background can never be sampled inside the glow. Old behavior was 10.
+BKG_MIN_DIST_ARCSEC = 30.0
 # ----------------------------------------------------------------------
 
 
@@ -1095,7 +1198,21 @@ def read_pool_obstable(datainit_path):
     """
     p = _pool_obstable_path(datainit_path)
     if not os.path.exists(p):
-        return None
+        # One-time migration, the pool used to live under the generic name
+        # 'observations_table.csv', which legacy writers can clobber. If a
+        # file exists under the old name, adopt it as the pool. (If that
+        # file was itself a clobbered per-target table, the hollow-claim
+        # check will simply flip the missing obsids back to raw and they re-clean.)
+        _legacy = os.path.join(datainit_path, "observations_table.csv")
+        if os.path.exists(_legacy):
+            try:
+                os.replace(_legacy, p)
+                print(f"  pool table migrated: observations_table.csv -> "
+                      f"{POOL_OBSTABLE_NAME}")
+            except Exception as _e:
+                print(f"  pool table migration failed ({_e})")
+        if not os.path.exists(p):
+            return None
     try:
         df = pd.read_csv(p, dtype={'ObsID': str})
         # Normalize the flag columns back to real bools if they came in as
@@ -1448,9 +1565,6 @@ def run_heasoft_command(command, quiet=False):
 
 
 def _run_heasoft_command_per_call(command, quiet=False):
-    """
-    FALLBACK = existing implementation. 
-    """
     """
     Runs HEASOFT commands through the appropriate backend.
 
@@ -2314,8 +2428,6 @@ def print_phase_report(title="PHASE TIMING REPORT"):
 #############################################################
 #Begining uvotfunctions
 #############################################################
-#WSL UVOTDETECT version, Thomas if you so desire and think my logical bellow is good and would like to use it, you can edit to the code to add
-# If WSL elements, As currently this is later called with a If WSL rather then being built in.
 def batch_run_uvotdetect(base_path, threshold=3.0, obs_table=None, only_obsids=None):
 
     def get_extension_count(filepath):
@@ -3017,6 +3129,8 @@ def run_upper_limit_uvotsource(obs_table, base_path, save_path,
         # Reuse the background region the generator already produced.
         bkg_reg_path = os.path.join(write_dir, bkg_reg_name)
         if not os.path.exists(bkg_reg_path):
+            log(f"[{obsid}] SKIP (upper limits): no BACKGROUND region in "
+                f"{write_dir}")
             return {'paths': w_paths, 'counts': counts, 'log': lines}
 
         current_files = os.listdir(root)
@@ -3803,7 +3917,7 @@ def build_synthetic_reference(group_orphans, base_path, save_path,
 
 
 def rescue_orphan_frames(obs_table, base_path, save_path,
-                         orphan_solutions=None, manual_mode=False):
+                         orphan_solutions=None, manual_mode=False, obstable_out=None):
     """
     Attempt to recover orphan frames by aspect-correcting them against
     synthetic reference images built from their N/E/S/W neighbors.
@@ -4327,9 +4441,9 @@ def update_smeared_flags(obs_table, smeared_obs_folders,
 ###########################################################
 def write_source_reg_files(base_path, target_ra, target_dec,
                            save_path=None,
-                           source_radius=5.0, max_offset=10.0,
+                           source_radius=5.0, max_offset=10.0, centroid=True,
                            output_name="auto_source.reg",
-                          obs_table=None, target=None, output_root=None):
+                           obs_table=None, target=None, output_root=None):
     """
     Auto-generate a source region file per observation directory.
 
@@ -4355,8 +4469,18 @@ def write_source_reg_files(base_path, target_ra, target_dec,
     skipped_no_source = 0
     skipped_no_detect = 0
     corrected_detects_run = 0
+    multi_source_warnings = 0
 
-    print(f"Generating source regions for target RA={target_ra:.6f}, Dec={target_dec:.6f}")
+    print(f"Generating source regions for target "
+          f"RA={target_ra:.6f}, Dec={target_dec:.6f}")
+    print(f" Centroid search radius (max_offset) = {max_offset:.1f}\" — "
+          f"detected sources within this distance of the target are "
+          f"centroid candidates. Change it per target with a "
+          f"'CentroidRadius' column in the batch CSV.")
+    if not centroid:
+        print(" CENTROIDING DISABLED for this target ('Centroid' column = "
+              "false in the batch CSV): the input RA/Dec is used verbatim — "
+              "no uvotdetect, no re-centering.")
 
     #
     # Run uvotdetect on summed images that don't have detect
@@ -4566,8 +4690,14 @@ def write_source_reg_files(base_path, target_ra, target_dec,
         return {'runs': local_runs, 'failures': local_failures, 'log': lines}
 
     # Thread the detect pass across observations (bands sequential within).
-    print(f"  Running corrected-detect across up to {MAX_WORKERS} "
-          f"observation(s) in parallel...")
+    if not centroid:
+        # Centroiding disabled: no detect files are needed for this target,
+        # regions will be written at the input coordinates in Phase 2.
+        print(" Skipping corrected-detect pass (centroiding disabled).")
+        work_dirs = []
+    else:
+        print(f" Running corrected-detect across up to {MAX_WORKERS} "
+              f"observation(s) in parallel...")
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(_detect_one_observation, obsid, root): obsid
                    for obsid, root in work_dirs}
@@ -4605,6 +4735,19 @@ def write_source_reg_files(base_path, target_ra, target_dec,
     for obsid, root in work_dirs:
         # Refresh file list (detect files may have just been created)
         current_files = os.listdir(root)
+
+        if not centroid:
+            # Centroiding disabled: write the region at the user's input
+            # coordinates, so the RA/Dec is never moved.
+            _wdir = _obsid_write_dir(output_root, root, obsid)
+            reg_path = os.path.join(_wdir, output_name)
+            with open(reg_path, 'w') as f:
+                f.write('# Region file format: DS9 version 4.1\n'
+                        '# Centroiding disabled - target coordinates used\n'
+                        'fk5\n'
+                        f'circle({target_ra},{target_dec},{source_radius}")\n')
+            created += 1
+            continue
 
         best_detect = None
         is_corrected = False
@@ -4683,14 +4826,33 @@ def write_source_reg_files(base_path, target_ra, target_dec,
                 min_dec = detected_frame.loc[min_sep, 'DEC']
                 min_dist = detected_frame.loc[min_sep, 'SEP']
 
+                # how many detected sources fall inside the search radius?
+                # >1 means the centroid may have locked onto the wrong star.
+                n_in_radius = 0
+                for _i in detected_frame.index:
+                    try:
+                        if (detected_frame.loc[_i, 'SEP']
+                                <= (max_offset * u.arcsecond)):
+                            n_in_radius += 1
+                    except Exception:
+                        pass
                 # Check to see how far away the nearest star is before
                 # writing a region file. If too far, no region is created
                 # and uvotsource will skip this observation.
                 if min_dist <= (max_offset * u.arcsecond):
                     _wdir = _obsid_write_dir(output_root, root, obsid)
                     reg_path = os.path.join(_wdir, output_name)
+                    _warn = ''
+                    if n_in_radius > 1:
+                        _warn = (f'# CENTROID_WARNING: {n_in_radius} sources '
+                                 f'within {max_offset}" of target - possible '
+                                 f'mis-centroid\n')
+                        multi_source_warnings += 1
+                        print(f"[{obsid}] WARNING: {n_in_radius} sources "
+                              f"within {max_offset}\" — possible mis-centroid")
                     reg_text = (
                         f'# Region file format: DS9 version 4.1\n'
+                        f'{_warn}'
                         f'fk5\n'
                         f'circle({min_ra},{min_dec},{source_radius}")\n'
                     )
@@ -4718,6 +4880,8 @@ def write_source_reg_files(base_path, target_ra, target_dec,
     print(f" Used old detect centroid: {used_old_detect}")
     print(f" Skipped (no source within {max_offset}\"): {skipped_no_source}")
     print(f" Skipped (no detect file): {skipped_no_detect}")
+    print(f" Multi-source (possible mis-centroid) warnings: "
+          f"{multi_source_warnings}")
 
 
 ###############################################################################
@@ -4727,7 +4891,7 @@ def write_source_reg_files(base_path, target_ra, target_dec,
 def check_sss_before_summation(obs_table, base_path, save_path,
                                target_ra, target_dec,
                                source_radius=5.0, bkg_radius=8.0,
-                               bkg_offset=30.0):
+                               bkg_offset=30.0, obstable_out=None):
     """
     Pre-summation small-scale-sensitivity (SSS) check.
 
@@ -5340,7 +5504,8 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
                               target_ra, target_dec, target=None,
                               source_reg=None, bkg_reg=None,
                               automation_mode=True, output_root=None,
-                              persistent_bkg_path=None, run_allframes=None, run_timeavg=None, finder_fov=None):
+                              persistent_bkg_path=None, run_allframes=None, run_timeavg=None, finder_fov=None,
+                              centroid=None, centroid_radius=None, keep_mag99=None):
     """
     PER-TARGET work: source region, background region, uvotsource photometry,
     upper limits, compilation + light curves.
@@ -5356,6 +5521,8 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
     """
     tlabel = f" [{target}]" if target else ""
     split_mode = output_root is not None
+    if keep_mag99 is None:
+        keep_mag99 = KEEP_MAG99_AS_LIMIT
 
     # SOURCE REGION
     if source_reg is None:
@@ -5365,10 +5532,15 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
         if target_ra is None or target_dec is None:
             raise ValueError("target_ra/target_dec required when source_reg is None.")
         src_reg_name = obs_file_name(None, 'source_reg', target=target)
+        if centroid is None:
+            centroid = True
+        if centroid_radius is None:
+            centroid_radius = 10.0
         write_source_reg_files(base_path, target_ra, target_dec,
                                save_path=save_path, output_name=src_reg_name,
                                obs_table=obs_table, target=target,
-                               output_root=output_root)
+                               output_root=output_root,
+                               centroid=centroid, max_offset=centroid_radius)
     else:
         src_reg_name = os.path.basename(source_reg)
 
@@ -5387,6 +5559,25 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
         bkg_reg_name = obs_file_name(None, 'bkg_reg', target=target)
     else:
         bkg_reg_name = os.path.basename(bkg_reg)
+        # REUSE PATH: the persistent background must still be DISTRIBUTED to
+        # every obsid write dir. New obsids' write dirs are created fresh (never frozen)
+        # each run and would otherwise lack the region, their photometry
+        # then silently skips
+        if os.path.exists(bkg_reg):
+            n_dist = 0
+            for _oid, _idir in image_dirs:
+                _wd = _obsid_write_dir(output_root, _idir, _oid)
+                _dst = os.path.join(_wd, bkg_reg_name)
+                if not os.path.exists(_dst):
+                    try:
+                        shutil.copy(bkg_reg, _dst)
+                        n_dist += 1
+                    except Exception as _e:
+                        print(f" bkg distribute failed for {_oid}: {_e}")
+            if n_dist:
+                print(f" persistent background distributed to {n_dist} "
+                      f"write dir(s) that lacked it (e.g. new obsids).")
+
 
     # UVOTSOURCE
     print("=" * 70)
@@ -5441,9 +5632,13 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
             bkg_reg_path = os.path.join(write_dir, bkg_reg_name)
             if not os.path.exists(src_reg_path):
                 counts['skipped'] += 1
+                log(f"[{obsid} / {band}] SKIP: no SOURCE region in "
+                    f"{write_dir} — photometry not run")
                 continue
             if not os.path.exists(bkg_reg_path):
                 counts['skipped'] += 1
+                log(f"[{obsid} / {band}] SKIP: no BACKGROUND region in "
+                    f"{write_dir} — photometry not run")
                 continue
 
             exp_summed = obs_file_name(band, 'summed_expmap')
@@ -5524,7 +5719,7 @@ def run_photometry_for_target(obs_table, base_path, save_path, image_dirs,
         run_allframes = RUN_ALLFRAMES
     df_mixed = _compile_and_plot_mode(
         obs_table, image_dirs, save_path, target, output_root,
-        mode='mixed', derive_flags=False)
+        mode='mixed', derive_flags=False, keep_mag99=keep_mag99)
     if run_allframes:
         try:
             run_allframes_for_target(
@@ -5570,7 +5765,7 @@ def run_uvotsource_pipeline(obs_table, base_path, save_path, source_reg=None,
         return None if automation_mode else None
     df_all = run_photometry_for_target(
         obs_table=obs_table, base_path=base_path, save_path=save_path,
-        image_dirs=image_dirs, target_ra=target_ra, target_dec=target_dec,
+        image_dirs=image_dirs, target_ra=target_ra, target_dec=target_dec, centroid=centroid,
         target=None, source_reg=source_reg, bkg_reg=bkg_reg,
         automation_mode=automation_mode, fov_arcmin=finder_fov)
     return df_all if automation_mode else None
@@ -6053,6 +6248,9 @@ def generate_best_background(base_path, save_path, target_ra, target_dec, bkg_ra
     print(f"Target: RA={target_ra:.6f}, Dec={target_dec:.6f}")
     print(f"Background radius: {bkg_radius}\"")
     print(f"Candidates to evaluate: {n_candidates}")
+    print(f"Minimum distance from target: {BKG_MIN_DIST_ARCSEC:.0f}\" "
+          f"(config variable BKG_MIN_DIST_ARCSEC — raise it for bright stars "
+          f"whose halo would otherwise contain the background region)")
 
     ###################################################################
     # First things first: Find a representative image for source detection.
@@ -6137,7 +6335,7 @@ def generate_best_background(base_path, save_path, target_ra, target_dec, bkg_ra
     if len(excess) > 0:
         candidates = find_valid_background_candidates(
             excess, target_center,
-            target_radius=10 * u.arcsec,
+            target_radius=BKG_MIN_DIST_ARCSEC * u.arcsec,
             bck_radius=bkg_radius * u.arcsec,
             step_size=1 * u.arcsec,
             dist_limit=200 * u.arcsec,
@@ -6149,14 +6347,15 @@ def generate_best_background(base_path, save_path, target_ra, target_dec, bkg_ra
         print("No sources detected, generating geometric candidates...")
         candidates = []
         angles = np.linspace(0, 360, n_candidates, endpoint=False)
+        _geo_off = max(30.0, BKG_MIN_DIST_ARCSEC + bkg_radius)
         for angle in angles:
             cand = target_center.directional_offset_by(
-                angle * u.deg, 30 * u.arcsec
+                angle * u.deg, _geo_off * u.arcsec
             )
             candidates.append({
                 'ra': float(cand.ra.deg),
                 'dec': float(cand.dec.deg),
-                'distance_arcsec': 30.0,
+                'distance_arcsec': float(_geo_off),
                 'angle_deg': float(angle),
             })
 
@@ -7055,28 +7254,68 @@ def setup_data_directories():
     print("  5. BATCH PROCESS-ONLY  - CSV list: skip download, process existing data")
     print("  6. dataInit POOL - CSV list: shared obsid pool, process each target against it (dataInit/dataSRC)")
     print()
-    print(" [Batch input file format]")
-    print(" The file must have a header row with these columns")
-    print(" (case-insensitive; multiple alias names accepted):")
-    print(" Target    (or: Name, Source, Source_Name, Object)")
-    print(" RA        (or: RA_deg, RA_obj, Right_Ascension)   in degrees)")
-    print(" Dec       (or: De, Dec_deg, De_obj, Declination)  in degrees)")
-    print(" Radius    (or: Search_Radius, R)  in degrees [OPTIONAL])")
-    print(" Threshold (or: Detect_Threshold, Sigma)   sigma [OPTIONAL])")
-    print(f" If no Threshold column is given, {DEFAULT_DETECT_THRESHOLD} sigma is used.")
-    print(f" If no Radius column is given, {DEFAULT_SEARCH_RADIUS} deg is used.")
-    print(" 3' will taget only observation directly targeting your source, while above 3' adds nearby targets")
-    print(" with 15' you will begin adding targets where the source is on the edge with 17' being the whole FOV of the instrument.")
-    print(" 'allframes'      (or: all_frames, perframe, per_frame) Will enable run type 'allframes' if set true")
-    print(" This will cause the code to run UVOTSOURCE on all exposures instead of just individual exposures and summed exposures")
-    print(" 'timeavg  (or:'time_avg', 'timeaveraged', 'time_averaged', 'allsummed', 'all_summed') Will enable run type 'timeavg' if set true")
-    print(" This will cause the code to run UVOTIMSUM on all exposures to combine them into once source and then run")
-    print(" UVOTSOURCE on these newly made co-added observations instead of just individual exposures and summed exposures")
-    print(" Note: neither of these will not stop it from running summed exposures it will be addition to what is called 'mixed processing'")
-    print(" if neither is not set to true (or:  '1', 'yes', 't', 'y', 'on') it will be disabled by default")
-    print(" finderfov  (or:'finder_fov', 'fov', 'fov_arcmin', 'finder_zoom') is the hard set fov of the .IMG made")
-    print(" by default the pipleine will produce a .IMG of the observation and will if not set with finderfov be 2' or large enough to contain the background region.")
-    print(" .csv = comma-separated, .txt = tab-separated. Auto-detected.")
+    print(" [Batch input file format]  (.csv = comma-separated, .txt = tab-separated; auto-detected)")
+    print(" Header row required. Column names are case-insensitive; the names in")
+    print(" parentheses are accepted aliases. Boolean columns accept true/1/yes/t/y/on;")
+    print(" anything else (or a blank cell) means false / use the default.")
+    print()
+    print(" REQUIRED columns:")
+    print("   Target     (Name, Source, Source_Name, Object)")
+    print("   RA         (RA_deg, RA_obj, Right_Ascension)    Must be in only degrees")
+    print("   Dec        (De, Dec_deg, De_obj, Declination)   Must be in only degrees")
+    print()
+    print(" OPTIONAL columns (blank cell = default):")
+    print(f"   Radius     (Search_Radius, R)   DEGREES; default {DEFAULT_SEARCH_RADIUS}.")
+    print("              Cone-search radius for finding obsids: 3' returns only")
+    print("              observations that directly targeted your source; larger")
+    print("              values add nearby pointings; ~15' starts adding fields where")
+    print("              your source sits on the edge; 17' covers the full UVOT FOV.")
+    print(f"   Threshold  (Detect_Threshold, Sigma)   sigma; default {DEFAULT_DETECT_THRESHOLD}.")
+    print("              uvotdetect significance threshold used during processing.")
+    print("   AllFrames  (all_frames, perframe, per_frame)   boolean; default off.")
+    print("              ALSO runs uvotsource on every individual exposure (one")
+    print("              photometry point per exposure), on top of the normal run.")
+    print("   TimeAvg    (time_avg, timeaveraged, time_averaged, allsummed,")
+    print("              all_summed)   boolean; default off. ALSO co-adds every good")
+    print("              exposure with uvotimsum into ONE deep image per band and")
+    print("              runs uvotsource on it (one time-averaged point per band).")
+    print("              Note: AllFrames and TimeAvg never replace the normal Mixed")
+    print("              run. They are extra passes on top of it.")
+    print("   FinderFOV  (finder_fov, fov, fov_arcmin, finder_zoom)   arcmin; default 2.")
+    print("              Field of view of the finder-chart PNG made for each target.")
+    print("              The frame auto-expands past this value if needed to keep the")
+    print("              background region in view.")
+    print("   Centroid   (centroiding, use_centroid, recenter)   boolean; default ON.")
+    print("              Set false to disable centroiding for that target: the source")
+    print("              region is placed at your exact RA/Dec and never moved.")
+    print("   CentroidRadius  (centroid_radius, searchradius, search_radius,")
+    print("              maxoffset, max_offset)   ARCSECONDS (not degrees!); default 10.")
+    print("              How far from your RA/Dec a detected source may sit and still")
+    print("              be adopted as the centroid. If more than one source falls")
+    print("              inside this radius, those rows are flagged")
+    print("              'Possible_Miscentroid' in the master photometry table.")
+    print("   SourceX    (source_x, srcx, is_x)   boolean; default off.")
+    print("              Marks the target as a SOURCE X: the CENTER of a group")
+    print("              of candidate sources (e.g. an XRT error-circle center).")
+    print("              X targets are processed LAST in the batch and are NEVER")
+    print("              centroided, their RA/Dec is the search center.")
+    print("   Group      (grp, association, source_group, grb)   any text.")
+    print("              Ties a SOURCE X to its SOURCE 1..N members: give the X")
+    print("              and its members the same group name. One X per group;")
+    print("              a batch may contain many groups.")
+    print("   CounterpartRadius  (counterpart_radius, error_radius)   ARCMIN.")
+    print("              Enables the SIMBAD counterpart chart: the zone (e.g.")
+    print("              the XRT error radius) is drawn as a solid black circle,")
+    print("              a dashed margin just outside it, all SIMBAD sources")
+    print("              numbered on the image with full identities in")
+    print("              counterparts_<target>.csv, and (for SOURCE X) the")
+    print("              group members' measured regions overlaid. Saved to")
+    print("              dataSRC/<target>/SOURCEX/.")
+    print("   keepmag99 ('keep_mag99', 'keep99', 'mag99', 'show99') Enables viewing of 99 Errors ")
+    print("              Sometimes UVOTSOURCE, will output a 99error which means something has occured ")
+    print("              Causeing UVOTSOURCE to be unable to figure out a real AB_MAG, making the value 99")
+    print("              However for these points, the upperlimit's can still be found and possible useful ")
+    print("              Therefor for these cases it has been made possible to enable 99 errors to be used for limits ")
 
     while True:
         choice = input("\nEnter your choice (1, 2, 3, 4, 5, or 6): ").strip()
@@ -7318,7 +7557,7 @@ master_table = pd.DataFrame(columns=['ObsID', 'Filter', 'Snapshot', 'Group Type'
 
 
 
-def clean_up_data(automation_mode=False, base_path=None, save_path=None, detect_threshold=3.0, only_obsids=None):
+def clean_up_data(automation_mode=False, base_path=None, save_path=None, detect_threshold=3.0, only_obsids=None, obstable_out=None):
     """  
         automation_mode : If True, skips GUI and print statements, returns data
         base_path : Required if automation_mode=True
@@ -7465,7 +7704,11 @@ def clean_up_data(automation_mode=False, base_path=None, save_path=None, detect_
             results['observations_table'] = obs_table
 
             # Save table to CSV
-            table_path = os.path.join(save_path, "observations_table.csv")
+            if obstable_out:
+                table_path = obstable_out
+                os.makedirs(os.path.dirname(table_path), exist_ok=True)
+            else:
+                table_path = os.path.join(save_path, "observations_table.csv")
             obs_table.to_csv(table_path, index=False)
 
             if not automation_mode:
@@ -7900,15 +8143,18 @@ def plot_uvot_lightcurves(
             return np.asarray(dnum, dtype=float) - _MJD_OFFSET
  
         secax = ax.secondary_xaxis("top", functions=(mjd_to_dnum, dnum_to_mjd))
-        secax.xaxis.set_major_locator(mdates.YearLocator())
-        secax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
- 
-        # Monthly subticks between year labels, thin out for long baselines so
-        # the top axis never turns into a solid ruler.
         try:
             span_yr = abs(ax.get_xlim()[1] - ax.get_xlim()[0]) / 365.25
         except Exception:
             span_yr = 2.0
+        # Label every year normally, every 2nd/3rd/... on very long baselines
+        # so the year labels can never collide regardless of figure width.
+        year_base = max(1, int(np.ceil(span_yr / 18.0)))
+        secax.xaxis.set_major_locator(mdates.YearLocator(base=year_base))
+        secax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+
+        # Monthly subticks between year labels; thin out for long baselines so
+        # the top axis never turns into a solid ruler.
         if span_yr <= 3:
             minor = mdates.MonthLocator()                       # every month (12/yr)
         elif span_yr <= 8:
@@ -8490,7 +8736,7 @@ def plot_uvot_lightcurves(
             if len(det) == 0 and len(ul) == 0 and len(ll) == 0:
                 continue  # no data for this band? no plot at all
  
-            fig, ax = plt.subplots(figsize=(12, 5))
+            fig, ax = plt.subplots(figsize=(16, 5))
             color = band_colors.get(band, None)
             if len(det) > 0:
                 ax.errorbar(det['MJD'], det[mag_col],
@@ -8803,9 +9049,83 @@ def _finalsource_is_detection(fpath):
     except Exception:
         return False
  
- 
+
+
+# Data dictionary for the public product table (written alongside it).
+# Descriptions follow the official uvotsource fhelp for instrument-derived info.
+PRODUCT_TABLE_HEADER = [
+    ('RA', 'deg',
+     'Right ascension (J2000) of the photometric aperture center: the '
+     'detected/centroided source position when centroiding was enabled, '
+     'otherwise the input target position'),
+    ('DEC', 'deg',
+     'Declination (J2000) of the photometric aperture center (see RA)'),
+    ('TARGET', '',
+     'Target name as given in the batch input file; also used in output '
+     'file naming'),
+    ('OBSID', '',
+     '11-digit Swift observation ID the measurement was made in'),
+    ('BAND', '',
+     'UVOT filter of the measurement: uvv (V), ubb (B), uuu (U), '
+     'uw1 (UVW1), um2 (UVM2), uw2 (UVW2)'),
+    ('SNAPSHOT', '',
+     'Exposure number within the observation for per-exposure rows; 0 means '
+     'the measurement was made on a summed or co-added image rather than a '
+     'single exposure'),
+    ('MJD', 'd',
+     'Modified Julian Date of the measurement, computed as MET/86400 + '
+     '51910.0 (Swift reference epoch 2001-01-01 = MJD 51910)'),
+    ('MET', 's',
+     'Swift Mission Elapsed Time: seconds since the 2001-01-01 reference '
+     'epoch, for this exposure (uvotsource MET column)'),
+    ('EXPOSURE', 's',
+     'Effective on-source exposure time: total time with filter-wheel-'
+     'blocked time, shift-and-add losses and DPU stalls subtracted and dead '
+     'time corrected; the actual time the detector was collecting photons'),
+    ('AB_MAG', 'mag',
+     'AB-system magnitude for the row: the measured coincidence-loss-'
+     'corrected magnitude for a detection, or, for a limit row where the '
+     'limiting magnitude is brighter than the measurement, the limiting '
+     'magnitude (AB_MAG_LIM)'),
+    ('AB_MAG_ERR', 'mag',
+     'One-sigma statistical uncertainty in AB_MAG (no systematic term; '
+     'syserr=NO). Set to -1 on upper-limit rows and -2 on lower-limit '
+     '(saturated) rows, where no measured-magnitude error applies'),
+    ('AB_MAG_LIM', 'mag',
+     'Limiting AB magnitude of the exposure at the run detection-'
+     'significance threshold (the uvotsource sigma parameter)'),
+    ('AB_FLUX_HZ', 'erg/s/cm2/Hz',
+     'AB flux density f_nu computed from AB_MAG as '
+     'f_nu = 10^(-0.4*(AB_MAG + 48.60)); this uses the row-correct magnitude '
+     '(the limit value on limit rows), unlike the uvotsource flux which '
+     'always follows the measured magnitude'),
+    ('AB_FLUX_HZ_ERR', 'erg/s/cm2/Hz',
+     'One-sigma uncertainty in AB_FLUX_HZ, propagated from AB_MAG_ERR as '
+     'sigma_f = f_nu * 0.4 * ln(10) * AB_MAG_ERR. Set to -1 on upper-limit '
+     'rows and -2 on lower-limit (saturated) rows'),
+    ('NSIGMA', '',
+     'Detection significance of the source in sigma: the background-'
+     'subtracted, coincidence-corrected source count rate divided by its '
+     'one-sigma statistical error'),
+    ('SATURATED', '',
+     'Boolean: uvotsource flagged the source as saturated, i.e. the count '
+     'rate is at the coincidence-loss saturation level of about one count '
+     'per frame'),
+    ('LowerLimit', '',
+     'Boolean: the measurement is a LOWER limit on brightness (saturated '
+     'source) - the true source is at least as bright as AB_MAG'),
+    ('UpperLimit', '',
+     'Boolean: the measurement is an UPPER limit (no detection above the '
+     'significance threshold) - the true magnitude is fainter (numerically '
+     'larger) than AB_MAG'),
+    ('Possible_Miscentroid', '',
+     'Boolean: more than one detected source fell inside the centroid '
+     'search radius for this observation, so the aperture may be centered '
+     'on the wrong star'),
+]
+
 def _compile_and_plot_mode(obs_table, image_dirs, save_path, target,
-                           output_root, mode, derive_flags=False, override_dirs=None):
+                           output_root, mode, derive_flags=False, override_dirs=None, keep_mag99=None):
     """
     Compile the finalsource FITS for ONE run mode into
     <save_path>/<ModeSubdir>/master_photometry{suffix}{tag}.txt and draw its light curves.
@@ -8900,6 +9220,8 @@ def _compile_and_plot_mode(obs_table, image_dirs, save_path, target,
             comp_jobs.append((obsid, os.path.join(root_dir, f), band, is_ul,
                               snapshot, forced_ul))
  
+    _keep99 = KEEP_MAG99_AS_LIMIT if keep_mag99 is None else bool(keep_mag99)
+
     def _read_one(obsid, filepath, band, is_ul, snapshot, forced_ul=False):
         try:
             with fits.open(filepath) as hdul:
@@ -8951,6 +9273,12 @@ def _compile_and_plot_mode(obs_table, image_dirs, save_path, target,
                     df["PLOT_MAG"] = np.where(df["UpperLimit"], lim, abmag)
                 else:
                     df["PLOT_MAG"] = abmag
+                # AB_MAG=99 = "no magnitude determined". Unless explicitly
+                # kept, drop these rows
+                if not _keep99:
+                    df = df[~(hard_nondet & ~sat)].copy()
+                    if df.empty:
+                        return None
             else:
                 df["UpperLimit"] = is_ul
                 if is_ul and 'AB_MAG_LIM' in df.columns:
@@ -8961,7 +9289,21 @@ def _compile_and_plot_mode(obs_table, image_dirs, save_path, target,
                     df["LowerLimit"] = df['SATURATED'].apply(_truthy) & (~bool(is_ul))
                 else:
                     df["LowerLimit"] = False
+                # AB_MAG==99 is uvotsource's "no magnitude determined" sentinel.
+                # It appears in BOTH detection files AND _ul files (a non-detected
+                # source in a limit pass still reports 99 while carrying a real
+                # AB_MAG_LIM). Drop it wherever it occurs (unless genuinely
+                # saturated) so the obsid/band leaves the master table entirely.
+                # KeepMag99 keeps the row instead, graphed on AB_MAG_LIM / PLOT_MAG.
+                if not _keep99 and 'AB_MAG' in df.columns:
+                    _m99 = pd.to_numeric(df['AB_MAG'], errors='coerce')
+                    _sat99 = (df['SATURATED'].apply(_truthy)
+                              if 'SATURATED' in df.columns else False)
+                    df = df[~((_m99 == 99) & ~_sat99)].copy()
+                    if df.empty:
+                        return None
             return df
+        
         except Exception as e:
             return {'_error': f"  Error reading {filepath}: {e}"}
  
@@ -9011,14 +9353,137 @@ def _compile_and_plot_mode(obs_table, image_dirs, save_path, target,
     if df_all.empty:
         print(f" No photometry to write{tlabel} (mode={mode}).")
         return df_all
- 
+
+    # Per-obsid mis-centroid flag, read back from the CENTROID_WARNING
+    # comment embedded in each obsid's source-region file.
+    try:
+        _src_name = obs_file_name(None, 'source_reg', target=target)
+        _mc = {}
+        for _oid, _d in comp_dirs:
+            _p = os.path.join(_d, _src_name)
+            flag = False
+            if os.path.exists(_p):
+                try:
+                    flag = 'CENTROID_WARNING' in open(_p).read()
+                except Exception:
+                    pass
+            _mc[str(_oid)] = flag
+        df_all['Possible_Miscentroid'] = (
+            df_all['OBSID'].astype(str).map(_mc).fillna(False))
+    except Exception as _e:
+        print(f" (mis-centroid flag column skipped: {_e})")
+
     txt_path = os.path.join(out_dir, f"master_photometry{suffix}{tag}.txt")
     df_all.to_csv(txt_path, sep='\t', index=False)
     print(f" Master photometry saved: {txt_path}  ({len(df_all)} rows)")
     if WRITE_CSV_COPY:
-        df_all.to_csv(os.path.join(out_dir, f"master_photometry{suffix}{tag}.csv"),
-                      index=False)
- 
+        df_all.to_csv(os.path.join(out_dir, f"master_photometry{suffix}{tag}.csv"), index=False)
+
+    # PRODUCT TABLE:
+    # Trimmed, comma-separated. The master (above) is
+    # untouched and remains the complete record.
+    try:
+        # RA/DEC hoisted to the top; the magnitude block is simplified to
+        # AB_MAG / AB_MAG_ERR / AB_MAG_LIM (no separate plot column), and
+        # AB_FLUX_HZ (+ error) is COMPUTED here from whichever magnitude is
+        # the correct one for the row (see below), not read from uvotsource.
+        _pt_cols = ['RA', 'DEC', 'TARGET', 'OBSID', 'BAND', 'SNAPSHOT',
+                    'MJD', 'MET', 'EXPOSURE',
+                    'AB_MAG', 'AB_MAG_ERR', 'AB_MAG_LIM',
+                    'AB_FLUX_HZ', 'AB_FLUX_HZ_ERR',
+                    'NSIGMA', 'SATURATED',
+                    'LowerLimit', 'UpperLimit', 'Possible_Miscentroid']
+        _pt_src = {'AB_MAG_ERR': 'AB_MAG_ERR'}
+        pt = pd.DataFrame()
+        if 'MET' in df_all.columns:
+            pt['MJD'] = (pd.to_numeric(df_all['MET'], errors='coerce')
+                         / 86400.0 + 51910.0)
+
+        # AB_MAG: measured magnitude, BUT if this is a limit row and the
+        # limit is brighter (numerically smaller) than the measured mag, the
+        # limit value is the meaningful one, so AB_MAG takes AB_MAG_LIM.
+        _meas = pd.to_numeric(df_all.get('AB_MAG'), errors='coerce')
+        _lim = pd.to_numeric(df_all.get('AB_MAG_LIM'), errors='coerce')
+        def _tr_local(v):
+            if isinstance(v, (bool, np.bool_)):
+                return bool(v)
+            if isinstance(v, (int, np.integer)):
+                return int(v) in (1, 84)
+            return str(v).strip().lower() in ('true', '1', 'yes', 't', 'y')
+        _isul = (df_all['UpperLimit'].apply(_tr_local)
+                 if 'UpperLimit' in df_all.columns
+                 else pd.Series(False, index=df_all.index))
+        _isll = (df_all['LowerLimit'].apply(_tr_local)
+                 if 'LowerLimit' in df_all.columns
+                 else pd.Series(False, index=df_all.index))
+        _is_lim = _isul | _isll
+        # use the limit when it is a limit row AND the limit is brighter
+        _use_lim = _is_lim & _lim.notna() & (_lim < _meas.fillna(np.inf))
+        ab_mag = _meas.where(~_use_lim, _lim)
+
+        for c in _pt_cols:
+            if c == 'MJD':
+                continue
+            if c == 'AB_MAG':
+                pt['AB_MAG'] = ab_mag
+                continue
+            if c in ('AB_FLUX_HZ', 'AB_FLUX_HZ_ERR'):
+                continue   # computed after this loop
+            _srccol = _pt_src.get(c, c)
+            pt[c] = df_all[_srccol] if _srccol in df_all.columns else pd.NA
+
+        # AB_FLUX_HZ computed from AB_MAG (the row-correct magnitude):
+        #   f_nu = 10 ** (-0.4 * (AB + 48.60))   [erg s^-1 cm^-2 Hz^-1]
+        # (astropy equivalent: (AB * u.ABmag).to(u.erg/u.s/u.cm**2/u.Hz))
+        # Error propagation for detections (m has an error):
+        #   sigma_f = f_nu * 0.4 * ln(10) * AB_MAG_ERR   (~0.9210 * f * err)
+        _AB_ZP = 48.60
+        _abmag_err = pd.to_numeric(df_all.get('AB_MAG_ERR'), errors='coerce')
+        f_nu = 10.0 ** (-0.4 * (ab_mag + _AB_ZP))
+        pt['AB_FLUX_HZ'] = f_nu
+        flux_err = f_nu * 0.4 * np.log(10.0) * _abmag_err.abs()
+        # limit rows carry no propagated flux error -> same sentinels as the
+        # magnitude error: -1 upper limit, -2 lower limit
+        flux_err = flux_err.where(~_isul, -1.0)
+        flux_err = flux_err.where(~_isll, -2.0)
+        pt['AB_FLUX_HZ_ERR'] = flux_err
+
+        # normalise the flag columns to clean True/False (SATURATED arrives
+        # as a raw FITS logical: sometimes bool, sometimes 0/1 or int8 84/70)
+        def _pt_bool(v):
+            if isinstance(v, (bool, np.bool_)):
+                return bool(v)
+            if isinstance(v, (int, np.integer, float, np.floating)):
+                try:
+                    return int(v) in (1, 84)
+                except (ValueError, OverflowError):
+                    return False
+            return str(v).strip().lower() in ('true', '1', 'yes', 't', 'y')
+        for c in ('SATURATED', 'LowerLimit', 'UpperLimit', 'Possible_Miscentroid'):
+            if c in pt.columns:
+                pt[c] = pt[c].apply(_pt_bool)
+
+        # limit rows carry no meaningful magnitude error:
+        #   -1 = upper limit, -2 = lower limit (saturated)
+        if 'AB_MAG_ERR' in pt.columns:
+            if 'UpperLimit' in pt.columns:
+                pt.loc[pt['UpperLimit'] == True, 'AB_MAG_ERR'] = -1
+            if 'LowerLimit' in pt.columns:
+                pt.loc[pt['LowerLimit'] == True, 'AB_MAG_ERR'] = -2
+        pt = pt.reindex(columns=_pt_cols)
+        pt_path = os.path.join(out_dir, f"product_table{suffix}{tag}.csv")
+        pt.to_csv(pt_path, index=False)
+        print(f" Product table saved: {pt_path}  ({len(pt)} rows)")
+        hdr_path = os.path.join(out_dir, "product_table_header.csv")
+        if not os.path.exists(hdr_path):
+            _hdr = pd.DataFrame(PRODUCT_TABLE_HEADER, columns=['Label', 'Units', 'Description'])
+            _hdr['Notes'] = ''
+            _hdr.to_csv(hdr_path, index=False)
+            print(f" Product-table header written: {hdr_path}")
+    except Exception as _e:
+        print(f" (product table skipped: {_e})")
+
+
     try:
         if mode == 'timeavg':
             # ONE co-added point per band, a time axis is meaningless here.
@@ -9200,17 +9665,103 @@ RUN_TIMEAVG = False
 # dominant group are dropped (uvotimsum shouldn't mix frame times).
 TIMEAVG_FRAMETIME_TOL = 0.0004
 
+# Exclude exposures the SSS check flagged as Saturated from the time-averaged
+# co-add. saturated data shouldn't enter a summation ------------
+# UNLESS a band has no unsaturated exposures at all, in which case they are
+# used anyway (with a printed warning) so the band still gets a point.
+TIMEAVG_EXCLUDE_SATURATED = True
+
+# SATURATION-WINDOW GUARD: extreme saturation can hollow out the PSF core so
+# badly that uvotsource returns AB_MAG=99 with the SATURATED flag UNSET,
+# such frames masquerade as upper limits and slip past the flag-based
+# exclusion above. So we take the time span from the FIRST to the LAST
+# known-saturated (lower-limit) exposure in the All-frames results, pad it
+# by the margin below, and inside that window keep ONLY exposures that are
+# confirmed detections; everything unproven in the window stays out of the
+# co-add. Requires the All-frames pass (Of course)
+TIMEAVG_SAT_WINDOW_GUARD = True
+TIMEAVG_SAT_WINDOW_MARGIN_DAYS = 30.0
+
 # When Mixed found NO point source, the deep co-add gets its OWN detection
-# attempt (a previously-invisible star can surface in the stack). These currently match
-# the Mixed pass's criteria, uvotdetect at this threshold, and a source counts
-# as "the target" if it centroids within this many arcsec of the target.
+# attempt (a previously-invisible star can surface in the stack). 
+# Re-centroid the source ON the deep co-add (per band). Mixed's region is
+# built from single exposures and can sit slightly off the source in the
+# stack; the co-add is deeper and better-centered, so it gets its own
+# uvotdetect centroid. Mixed's region remains the fallback when the deep
+# detect fails. Set False to always reuse Mixed's region (old behavior).
+TIMEAVG_RECENTROID = True
+
 TIMEAVG_DETECT_THRESHOLD = 3.0
+
 TIMEAVG_MAX_OFFSET_ARCSEC = 10.0
+
+
+
+
+def _allframes_sat_window_and_index(save_path, target):
+    """Anchors for the time-averaged SATURATION-WINDOW GUARD, taken from the
+    All-frames master (which runs BEFORE the time-averaged pass).
+
+    Returns (window, index):
+      window = (met_lo, met_hi): the span from the FIRST to the LAST
+               LOWER-LIMIT (saturated) exposure, padded by
+               TIMEAVG_SAT_WINDOW_MARGIN_DAYS on each side; None when there
+               are no saturated rows or no All-frames master.
+      index  = {(obsid, band, snapshot): 'det'|'ul'|'ll'} so frames inside
+               the window can be kept only when they are CONFIRMED
+               detections. None when no master exists.
+    """
+    tag = f"_{target}" if target else ""
+    base = os.path.join(save_path, _MODE_SPEC['allframes']['subdir'])
+    path = None
+    for ext in ('.txt', '.csv'):
+        p = os.path.join(base, f"master_photometry_allframes{tag}{ext}")
+        if os.path.exists(p):
+            path = p
+            break
+    if path is None:
+        return None, None
+    try:
+        df = pd.read_csv(path, sep=('\t' if path.endswith('.txt') else ','), dtype={'OBSID': str})
+    except Exception:
+        return None, None
+    if df.empty or 'MET' not in df.columns:
+        return None, None
+
+    def _tr(v):
+        if isinstance(v, (bool, np.bool_)):
+            return bool(v)
+        if isinstance(v, (int, np.integer)):
+            return int(v) in (1, 84)
+        return str(v).strip().lower() in ('true', '1', 'yes', 't')
+
+    index = {}
+    for _, r in df.iterrows():
+        try:
+            key = (str(r['OBSID']).zfill(11), str(r['BAND']).lower(), int(r['SNAPSHOT']))
+        except Exception:
+            continue
+        if _tr(r.get('LowerLimit', False)):
+            index[key] = 'll'
+        elif _tr(r.get('UpperLimit', False)):
+            index[key] = 'ul'
+        else:
+            index[key] = 'det'
+
+    met = pd.to_numeric(df['MET'], errors='coerce')
+    ll_mask = (df['LowerLimit'].apply(_tr)
+               if 'LowerLimit' in df.columns
+               else pd.Series(False, index=df.index))
+    sat_met = met[ll_mask & met.notna()]
+    if sat_met.empty:
+        return None, index
+    pad = TIMEAVG_SAT_WINDOW_MARGIN_DAYS * 86400.0
+    return (float(sat_met.min()) - pad, float(sat_met.max()) + pad), index
 
 
 def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                            src_reg_name, bkg_reg_name, target=None,
-                           output_root=None, target_ra=None, target_dec=None):
+                           output_root=None, target_ra=None, target_dec=None, centroid=True):
     """
     TIME-AVERAGED photometry: co-add EVERY good exposure of the target's
     obsids into ONE deep image per band, then run uvotsource once on it.
@@ -9326,6 +9877,19 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
             good = _resolve_good_extensions(sk, obsid, band, obs_table)['good']
             if not good:
                 continue
+            # per-snapshot Saturated flags from the obs table (SSS check)
+            sat_flagged = set()
+            if (TIMEAVG_EXCLUDE_SATURATED and obs_table is not None
+                    and 'Saturated Flag' in getattr(obs_table, 'columns', [])):
+                try:
+                    _m = ((obs_table['ObsID'].astype(str) == str(obsid)) &
+                          (obs_table['Filter'] == band) &
+                          (obs_table['Saturated Flag'] == True))
+                    sat_flagged = set(
+                        obs_table.loc[_m, 'Snapshot'].astype(int).tolist())
+                except Exception:
+                    sat_flagged = set()
+                    
             ex = None
             for cand in (f"sw{obsid}{band}_ex.img",
                          f"sw{obsid}{band}_ex.img.gz"):
@@ -9345,6 +9909,8 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                             frames.append({
                                 'sk': sk, 'ex': ex, 'ext': en,
                                 'obsid': str(obsid),
+                                'sat': (en in sat_flagged),
+                                'tstart': float(hdu.header.get('TSTART', np.nan)),
                                 'ft': (float(ft) if ft is not None else None),
                                 'exp': float(hdu.header.get('EXPOSURE', 0.0)),
                             })
@@ -9353,6 +9919,46 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                     f"({str(e)[:120]})")
         if not frames:
             return res   # this band simply has no good data, no plot entry
+
+        # saturation exclusion (config: TIMEAVG_EXCLUDE_SATURATED)
+        if TIMEAVG_EXCLUDE_SATURATED:
+            _clean = [f for f in frames if not f.get('sat')]
+            _n_sat = len(frames) - len(_clean)
+            if _clean:
+                if _n_sat:
+                    log(f" {band}: excluding {_n_sat} saturated exposure(s) "
+                        f"from the co-add (TIMEAVG_EXCLUDE_SATURATED = True)")
+                frames = _clean
+            elif _n_sat:
+                log(f"  {band}: ALL {_n_sat} good exposures are saturated — "
+                    f"including them anyway (no unsaturated data exists)")
+
+        # saturation-window guard (config: TIMEAVG_SAT_WINDOW_GUARD) 
+        # Inside the known-saturated era (+margin), only confirmed
+        # detections may enter the co-add: mag-99 "upper limits" in that
+        # window are almost certainly hollowed-out saturated frames.
+        if TIMEAVG_SAT_WINDOW_GUARD and sat_window is not None:
+            _w0, _w1 = sat_window
+            _kept, _dropped = [], 0
+            for f in frames:
+                _t = f.get('tstart')
+                if (_t is None or not np.isfinite(_t)
+                        or not (_w0 <= _t <= _w1)):
+                    _kept.append(f)
+                    continue
+                _verdict = (af_index.get((f['obsid'], band, f['ext']))
+                            if af_index else None)
+                if _verdict == 'det':
+                    _kept.append(f)
+                else:
+                    _dropped += 1
+            if _dropped and _kept:
+                log(f" {band}: saturation-window guard dropped {_dropped} "
+                    f"unconfirmed exposure(s) inside the saturated era")
+                frames = _kept
+            elif _dropped:
+                log(f" {band}: window guard would drop ALL exposures — "
+                    f"keeping them (no data outside the saturated era)")
 
         # FRAMTIME consistency (same rule as summation)
         # Group by frame time within tolerance; keep the dominant group
@@ -9458,15 +10064,15 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                        if have_all_ex else "NONE")
 
         # source region for the DEEP image
-        if have_src:
-            # Mixed already located the point source, reuse its region.
-            src_use = os.path.basename(src_path)
-            lim_tok = ""
-        else:
-            # Mixed saw nothing in the shallow data, but the co-add is much
-            # deeper (proably), re-detect HERE before assuming an upper limit. Same
-            # criteria as the Mixed pass: uvotdetect, source counts if it
-            # centroids within TIMEAVG_MAX_OFFSET_ARCSEC of the target.
+        # By default (TIMEAVG_RECENTROID) the deep co-add gets its OWN
+        # centroid: Mixed's region comes from single exposures and can sit
+        # slightly off the true source on the stack. Mixed's region stays as
+        # the FALLBACK whenever the deep detect fails or finds nothing near
+        # the target; '_lim' is forced only when Mixed ALSO had no source.
+        want_recentroid = ((not have_src) or
+                           (TIMEAVG_RECENTROID and centroid))
+        hit = None   # (ra, dec, sep_arcsec) of the deep-image centroid
+        if want_recentroid:
             det_name = f"{band}_timeavg_detect{tag}.fits"
             det_path = os.path.join(work_dir, det_name)
             cmd = (f"cd '{wd}' && uvotdetect infile='{img_use}' "
@@ -9475,8 +10081,7 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                    f"mode=h < /dev/null")
             run_heasoft_command(cmd, quiet=True)
             time.sleep(0.5)
- 
-            hit = None   # (ra, dec, sep_arcsec) of the recovered source
+
             if os.path.exists(det_path):
                 try:
                     ras = decs = None
@@ -9494,31 +10099,46 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
                             hit = (float(ras[i]), float(decs[i]),
                                    float(seps[i]))
                 except Exception as e:
-                    log(f"  {band}: deep detect catalog unreadable "
+                    log(f" {band}: deep detect catalog unreadable "
                         f"({str(e)[:100]}) — treating as non-detection")
- 
+
+        if hit is not None:
+            # deep-image centroid wins: write a per-band region at it
             band_src_name = f"auto_source_tavg_{band}{tag}.reg"
             band_src_path = os.path.join(work_dir, band_src_name)
-            if hit is not None:
-                with open(band_src_path, 'w') as fh:
-                    fh.write('# Region file format: DS9 version 4.1\n'
-                             '# Source RECOVERED on the time-averaged co-add\n'
-                             'fk5\n'
-                             f'circle({hit[0]},{hit[1]},5.000")\n')
-                lim_tok = ""
-                log(f"  {band}: source RECOVERED on the deep co-add "
-                    f"({hit[2]:.1f}\" from target) — measuring normally")
-            else:
-                with open(band_src_path, 'w') as fh:
-                    fh.write('# Region file format: DS9 version 4.1\n'
-                             '# No source on the deep co-add — target position\n'
-                             'fk5\n'
-                             f'circle({target_ra},{target_dec},5.000")\n')
-                lim_tok = "_lim"
-                log(f"  {band}: still no source within "
-                    f"{TIMEAVG_MAX_OFFSET_ARCSEC:.0f}\" on the DEEP image — "
-                    f"forced upper limit")
+            with open(band_src_path, 'w') as fh:
+                fh.write('# Region file format: DS9 version 4.1\n'
+                         '# Centroid from the time-averaged co-add\n'
+                         'fk5\n'
+                         f'circle({hit[0]},{hit[1]},5.000")\n')
             src_use = band_src_name
+            lim_tok = ""
+            log(f"  {band}: re-centroided on the deep co-add "
+                f"({hit[2]:.1f}\" from target)")
+        elif have_src:
+            # deep detect off / failed / nothing near target. keep Mixed's
+            # region (Mixed did find a source, so no forced limit).
+            src_use = os.path.basename(src_path)
+            lim_tok = ""
+            if want_recentroid:
+                log(f"  {band}: deep re-centroid found nothing within "
+                    f"{TIMEAVG_MAX_OFFSET_ARCSEC:.0f}\" — keeping Mixed's "
+                    f"region")
+        else:
+            # Mixed had nothing AND the deep image shows nothing at the
+            # target: photometer the target position, forced upper limit.
+            band_src_name = f"auto_source_tavg_{band}{tag}.reg"
+            band_src_path = os.path.join(work_dir, band_src_name)
+            with open(band_src_path, 'w') as fh:
+                fh.write('# Region file format: DS9 version 4.1\n'
+                         '# No source on the deep co-add — target position\n'
+                         'fk5\n'
+                         f'circle({target_ra},{target_dec},5.000")\n')
+            src_use = band_src_name
+            lim_tok = "_lim"
+            log(f" {band}: still no source within "
+                f"{TIMEAVG_MAX_OFFSET_ARCSEC:.0f}\" on the DEEP image — "
+                f"forced upper limit")
  
         out_name = out_lim_name if lim_tok else out_det_name
         out_path = os.path.join(work_dir, out_name)
@@ -9539,9 +10159,25 @@ def run_timeavg_for_target(obs_table, base_path, save_path, image_dirs,
             log(f" ❌ {band}: uvotsource produced no output on the co-add")
         return res
  
+    # saturation-window guard (cross-band, from the All-frames
+    # master, see TIMEAVG_SAT_WINDOW_GUARD (Really gotta cleanup where all the configs are)).
+    sat_window = af_index = None
+    if TIMEAVG_SAT_WINDOW_GUARD:
+        try:
+            sat_window, af_index = _allframes_sat_window_and_index(
+                save_path, target)
+        except Exception as _e:
+            print(f"  saturation-window guard unavailable ({_e})")
+        if sat_window is not None:
+            print(f"  saturation-window guard: saturated era spans MET "
+                  f"{sat_window[0]:.0f}..{sat_window[1]:.0f} (margin "
+                  f"{TIMEAVG_SAT_WINDOW_MARGIN_DAYS:.0f} d included) — "
+                  f"unconfirmed exposures inside it are excluded from the "
+                  f"co-add")
     # drive the bands in parallel (each band fully independent)
     n_ok = n_skip = 0
     workers = min(MAX_WORKERS, len(BANDS))
+    
     print(f"Co-adding + photometering up to {len(BANDS)} band(s) "
           f"across {workers} worker(s)...\n")
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -9763,7 +10399,7 @@ FINDER_BANDS = ('ubb', 'uvv', 'uuu', 'um2', 'uw1', 'uw2',)
 FINDER_FOV_ARCMIN = 2.0
 # Matplotlib colormap for the finder image. 'gray' = classic finder look;
 # any matplotlib colormap name works, e.g. 'jet', 'viridis', 'inferno', etc
-FINDER_CMAP = 'jet'
+FINDER_CMAP = 'viridis'
 
 
 def _parse_region_circle(reg_path):
@@ -9781,7 +10417,7 @@ def _parse_region_circle(reg_path):
         pass
     return None
 
-
+ 
 def make_target_finder_image(image_path, target_ra, target_dec, out_png,
                              src_reg_path=None, bkg_reg_path=None,
                              src_radius_arcsec=5.0,
@@ -9797,7 +10433,9 @@ def make_target_finder_image(image_path, target_ra, target_dec, out_png,
     extension, or the target falls off the frame, callers can then try the
     next candidate image).
     """
+    
 
+ 
     if fov_arcmin is None:
         fov_arcmin = FINDER_FOV_ARCMIN
     if cmap is None:
@@ -9836,7 +10474,7 @@ def make_target_finder_image(image_path, target_ra, target_dec, out_png,
  
     half = (fov_arcmin * 60.0 / 2.0) / plate
     # AUTO ZOOM-OUT: if the source or background circle would fall outside
-    # the requested field of view, expand the cutout so both
+    # the requested field of view, expand the cutout (never shrink) so both
     # regions always land in frame, with a 15% margin.
     for circ in (src_circ, bkg_circ):
         if circ is None:
@@ -9849,86 +10487,93 @@ def make_target_finder_image(image_path, target_ra, target_dec, out_png,
         except Exception:
             pass
  
-    x0, x1 = max(0, int(tx - half)), min(nx, int(tx + half) + 1)
-    y0, y1 = max(0, int(ty - half)), min(ny, int(ty + half) + 1)
-    if (x1 - x0) < 10 or (y1 - y0) < 10:
+    try:
+        cut = Cutout2D(data, (tx, ty), (int(2 * half), int(2 * half)), wcs=w, mode='trim')
+    except Exception:
         return None
-    cut = data[y0:y1, x0:x1]
+    cdata, cw = cut.data, cut.wcs
+    if cdata.shape[0] < 10 or cdata.shape[1] < 10:
+        return None
+    ctx, cty = cut.to_cutout_position((tx, ty))
  
-    # LOG scaling
-    norm = ImageNormalize(cut, interval=PercentileInterval(99.5),
-                          stretch=LogStretch())
+    # LOG scaling: 99.5-percentile interval + log stretch
+    norm = ImageNormalize(cdata, interval=PercentileInterval(99.5), stretch=LogStretch())
  
-    fig, ax = plt.subplots(figsize=(6.4, 6.4))
+    fig = plt.figure(figsize=(7.4, 7.4))
     fig.patch.set_facecolor('black')
+    ax = fig.add_subplot(projection=cw)
     ax.set_facecolor('black')
-    ax.imshow(cut, origin='lower', cmap=cmap, norm=norm, extent=(x0 - 0.5, x1 - 0.5, y0 - 0.5, y1 - 0.5))
+    ax.imshow(cdata, origin='lower', cmap=cmap, norm=norm)
  
-    # SOURCE region (solid green)
+    # true RA/Dec coordinate axes
+    try:
+        ra_ax, dec_ax = ax.coords[0], ax.coords[1]
+        ra_ax.set_axislabel('RA (J2000)', color='white', fontsize=13)
+        dec_ax.set_axislabel('Dec (J2000)', color='white', fontsize=13)
+        ra_ax.set_major_formatter('hh:mm:ss')
+        dec_ax.set_major_formatter('dd:mm:ss')
+        for c in (ra_ax, dec_ax):
+            c.set_ticklabel(color='white', size=11)
+            c.set_ticks(color='white')
+            c.display_minor_ticks(True)
+        ax.coords.grid(color='white', alpha=0.15, linestyle=':')
+    except Exception:
+        pass
+    for s in ax.spines.values():
+        s.set_color('white')
+ 
+    sky = ax.get_transform('fk5')
+ 
+    # SOURCE region: solid BLACK true circle on the sphere
     if src_circ is not None:
         sra, sdec, srad = src_circ
     else:
         sra, sdec, srad = target_ra, target_dec, float(src_radius_arcsec)
     try:
-        sx, sy = w.all_world2pix(sra, sdec, 0)
-        ax.add_patch(Circle((float(sx), float(sy)), srad / plate, fill=False, ec='lime', lw=2.0, zorder=5))
+        ax.add_patch(SphericalCircle((sra * u.deg, sdec * u.deg),
+                                     srad * u.arcsec, edgecolor='black',
+                                     facecolor='none', lw=2.4,
+                                     transform=sky, zorder=5))
     except Exception:
         pass
  
-    # BACKGROUND region (dashed cyan) 
+    # BACKGROUND region: dashed WHITE 
     if bkg_circ is not None:
         try:
-            bx, by = w.all_world2pix(bkg_circ[0], bkg_circ[1], 0)
-            ax.add_patch(Circle((float(bx), float(by)), bkg_circ[2] / plate,
-                                fill=False, ec='cyan', lw=1.5, ls='--', zorder=5))
+            ax.add_patch(SphericalCircle((bkg_circ[0] * u.deg,
+                                          bkg_circ[1] * u.deg),
+                                         bkg_circ[2] * u.arcsec,
+                                         edgecolor='white', facecolor='none',
+                                         lw=1.8, linestyle='--',
+                                         transform=sky, zorder=5))
         except Exception:
             pass
  
-    # crosshair ticks at the catalog target position (offset so they never cover the source itself)
+    # crosshair ticks at the catalog target position (offset so they never cover the source itself; pixel coords of the cutout) 
     g = 1.8 * srad / plate
-    ax.plot([tx + g, tx + 2 * g], [ty, ty], color='red', lw=1.4, zorder=6)
-    ax.plot([tx, tx], [ty + g, ty + 2 * g], color='red', lw=1.4, zorder=6)
+    ax.plot([ctx + g, ctx + 2 * g], [cty, cty], color='red', lw=1.4, zorder=6)
+    ax.plot([ctx, ctx], [cty + g, cty + 2 * g], color='red', lw=1.4, zorder=6)
  
-    # 10" scale bar (bottom-left) 
+    # 10" scale bar (bottom-left; angular scale is uniform here) 
+    h_px, w_px = cdata.shape
     bar = 10.0 / plate
-    bx0, by0 = x0 + 0.06 * (x1 - x0), y0 + 0.06 * (y1 - y0)
-    ax.plot([bx0, bx0 + bar], [by0, by0], color='white', lw=2.2)
-    ax.text(bx0 + bar / 2, by0 + 0.015 * (y1 - y0), '10"', color='white', ha='center', va='bottom', fontsize=11)
+    bx0, by0 = 0.06 * w_px, 0.06 * h_px
+    ax.plot([bx0, bx0 + bar], [by0, by0], color='white', lw=2.2, zorder=6)
+    ax.text(bx0 + bar / 2, by0 + 0.015 * h_px, '10"', color='white',
+            ha='center', va='bottom', fontsize=11, zorder=6)
  
-    # N/E compass from the WCS (top-right)
-    try:
-        import math
-        pN = w.all_world2pix(target_ra, target_dec + 30.0 / 3600.0, 0)
-        pE = w.all_world2pix(
-            target_ra + 30.0 / 3600.0 /
-            max(0.001, abs(math.cos(math.radians(target_dec)))),
-            target_dec, 0)
-        vN = np.array([float(pN[0]) - tx, float(pN[1]) - ty])
-        vE = np.array([float(pE[0]) - tx, float(pE[1]) - ty])
-        vN /= max(1e-9, np.hypot(*vN))
-        vE /= max(1e-9, np.hypot(*vE))
-        L = 0.09 * (x1 - x0)
-        cx0 = x0 + 0.88 * (x1 - x0)
-        cy0 = y0 + 0.84 * (y1 - y0)
-        for v, lab in ((vN, 'N'), (vE, 'E')):
-            ax.annotate('', xy=(cx0 + L * v[0], cy0 + L * v[1]), xytext=(cx0, cy0),
-                        arrowprops=dict(arrowstyle='-|>', color='white', lw=1.4))
-            ax.text(cx0 + 1.28 * L * v[0], cy0 + 1.28 * L * v[1], lab,
-                    color='white', ha='center', va='center', fontsize=11)
-    except Exception:
-        pass
+    # title + frame size 
+    size_line = (f"{w_px}\u00d7{h_px} px "
+                 f"({w_px * plate / 60.0:.1f}\u2032\u00d7"
+                 f"{h_px * plate / 60.0:.1f}\u2032)")
+    ax.set_title((f"{title}\n{size_line}" if title else size_line),
+                 color='white', fontsize=13, pad=14)
  
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for s in ax.spines.values():
-        s.set_color('white')
-    if title:
-        ax.set_title(title, color='white', fontsize=14)
- 
-    plt.tight_layout()
-    fig.savefig(out_png, dpi=150, facecolor=fig.get_facecolor(), bbox_inches='tight')
+    fig.savefig(out_png, dpi=150, facecolor=fig.get_facecolor(),
+                bbox_inches='tight')
     plt.close(fig)
     return out_png
+
 
 
 def make_finder_images_for_target(image_dirs, save_path, target_ra,
@@ -10037,6 +10682,390 @@ def make_finder_images_for_target(image_dirs, save_path, target_ra,
         print(" finder: could not produce any finder image (no usable images, or target off every frame)")
     return made
  
+
+#########################################################################
+# COUNTERPART CHARTS 
+# Requires: pip install astroquery   (WSL: add --break-system-packages)
+#########################################################################
+
+# Master toggle: when True, every SOURCE X target gets a counterpart chart
+# even without a CounterpartRadius in the CSV (using the default below).
+# A CounterpartRadius value in the CSV enables the chart for that target
+# regardless of this toggle.
+MAKE_COUNTERPART_CHARTS = False
+# Zone radius (ARCMIN) used when the master toggle is on but the CSV gave no CounterpartRadius.
+COUNTERPART_DEFAULT_RADIUS_ARCMIN = 3.0
+# The dashed "just outside, just in case" circle, as a factor of the zone.
+COUNTERPART_MARGIN_FACTOR = 1.25
+# Chart field of view as a factor of the ZONE DIAMETER.
+COUNTERPART_FOV_FACTOR = 1.5
+
+
+def _simbad_raw_query(center_ra, center_dec, radius_arcmin):
+    """Live SIMBAD cone search. Returns a list of dicts
+    {'main_id','ra_deg','dec_deg','otype'} or raises on any failure
+    (no network, astroquery missing, ...). Kept separate so the caching
+    layer and tests can swap it out."""
+    from astroquery.simbad import Simbad
+    sim = Simbad()
+    try:
+        sim.add_votable_fields('otype')
+    except Exception:
+        pass
+    sim.TIMEOUT = 30
+    res = sim.query_region(
+        SkyCoord(center_ra, center_dec, unit='deg', frame='fk5'),
+        radius=radius_arcmin * u.arcmin)
+    if res is None or len(res) == 0:
+        return []
+    cols = {c.lower(): c for c in res.colnames}
+    out = []
+    for row in res:
+        mid = str(row[cols.get('main_id', cols.get('mainid', 'MAIN_ID'))])
+        rra, rde = row[cols.get('ra', 'RA')], row[cols.get('dec', 'DEC')]
+        try:                              # new astroquery: degrees already
+            ra_deg, dec_deg = float(rra), float(rde)
+        except (TypeError, ValueError):   # old astroquery: sexagesimal strings
+            c = SkyCoord(f"{rra} {rde}", unit=(u.hourangle, u.deg), frame='fk5')
+            ra_deg, dec_deg = float(c.ra.deg), float(c.dec.deg)
+        otype = ''
+        for k in ('otype', 'otype_s', 'otype_txt'):
+            if k in cols:
+                otype = str(row[cols[k]])
+                break
+        out.append({'main_id': mid, 'ra_deg': ra_deg, 'dec_deg': dec_deg, 'otype': otype})
+    return out
+
+
+def query_simbad_counterparts(center_ra, center_dec, query_radius_arcmin,
+                              zone_radius_arcmin, cache_csv):
+    """SIMBAD counterparts with a merge-cache:
+      * cache exists + query succeeds -> NEW sources are APPENDED (existing
+        keep their numbers, so labels stay stable across reruns)
+      * query fails (offline / astroquery missing) -> cache used as-is
+      * no cache + no network -> empty table with a printed notice
+    Returns a DataFrame [N, MAIN_ID, RA_deg, DEC_deg, OTYPE, Sep_arcmin,InZone]
+    sorted by N, and writes it to cache_csv."""
+    old = None
+    if os.path.exists(cache_csv):
+        try:
+            old = pd.read_csv(cache_csv)
+        except Exception:
+            old = None
+
+    fresh = None
+    try:
+        fresh = _simbad_raw_query(center_ra, center_dec, query_radius_arcmin)
+        print(f"  SIMBAD: query OK — {len(fresh)} source(s) within "
+              f"{query_radius_arcmin:.1f}'")
+    except Exception as e:
+        print(f"  SIMBAD: query unavailable ({str(e)[:90]}) — "
+              f"{'using cached catalog' if old is not None else 'no cache; catalog will be empty'}")
+
+    rows = []
+    known = set()
+    if old is not None and not old.empty and 'MAIN_ID' in old.columns:
+        for _, r in old.iterrows():
+            rows.append({'MAIN_ID': str(r['MAIN_ID']),
+                         'RA_deg': float(r['RA_deg']),
+                         'DEC_deg': float(r['DEC_deg']),
+                         'OTYPE': str(r.get('OTYPE', ''))})
+            known.add(str(r['MAIN_ID']))
+    n_new = 0
+    if fresh:
+        for s in fresh:
+            if s['main_id'] in known:
+                continue
+            rows.append({'MAIN_ID': s['main_id'], 'RA_deg': s['ra_deg'],
+                         'DEC_deg': s['dec_deg'], 'OTYPE': s['otype']})
+            known.add(s['main_id'])
+            n_new += 1
+        if old is not None and n_new:
+            print(f" SIMBAD: {n_new} NEW source(s) added to the cached "
+                  f"catalog (existing numbering unchanged)")
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        df = pd.DataFrame(columns=['N', 'MAIN_ID', 'RA_deg', 'DEC_deg',
+                                   'OTYPE', 'Sep_arcmin', 'InZone'])
+        df.to_csv(cache_csv, index=False)
+        return df
+    df['N'] = range(1, len(df) + 1)
+    tgt = SkyCoord(center_ra, center_dec, unit='deg', frame='fk5')
+    cat = SkyCoord(df['RA_deg'].values, df['DEC_deg'].values, unit='deg', frame='fk5')
+    df['Sep_arcmin'] = tgt.separation(cat).arcminute
+    df['InZone'] = df['Sep_arcmin'] <= zone_radius_arcmin
+    df = df[['N', 'MAIN_ID', 'RA_deg', 'DEC_deg', 'OTYPE', 'Sep_arcmin', 'InZone']]
+    df.to_csv(cache_csv, index=False)
+    return df
+
+
+def _member_source_region(dataSRC_path, member_name, band):
+    """Best available measured region for a group member: its per-band
+    time-averaged re-centroid first, then its Mixed region from any obsid
+    dir. Returns (ra, dec, radius_arcsec) or None."""
+    mtag = _sanitize_target_name(str(member_name))
+    muvot = os.path.join(dataSRC_path, mtag, "UVOT")
+    cands = [os.path.join(muvot, "TimeAvg", f"auto_source_tavg_{band}_{mtag}.reg")]
+    if os.path.isdir(muvot):
+        for d in sorted(os.listdir(muvot)):
+            p = os.path.join(muvot, d, f"auto_source_{mtag}.reg")
+            if os.path.exists(p):
+                cands.append(p)
+    for p in cands:
+        if os.path.exists(p):
+            circ = _parse_region_circle(p)
+            if circ:
+                return circ
+    return None
+
+
+def make_counterpart_chart(image_path, dataSRC_path, target, target_ra,
+                           target_dec, radius_arcmin, out_png,
+                           counterparts=None, group_members=None,
+                           band=None, cmap=None):
+    """
+    Render ONE counterpart chart on `image_path`:
+      solid BLACK circle   = the error/search zone (radius_arcmin)
+      dashed BLACK circle  = the margin (COUNTERPART_MARGIN_FACTOR x zone)
+      small WHITE circles  = SIMBAD counterparts, numbered with leader lines
+                             (full identities in the counterparts CSV)
+      MAGENTA circles      = SOURCE 1..N group members (S1, S2, ...), using
+                             their measured regions when available, else
+                             their CSV coordinates; legend under the image
+      red crosshair        = SOURCE X position (the chart center)
+    FOV = COUNTERPART_FOV_FACTOR x zone diameter. True RA/Dec axes.
+    Returns out_png, or None if the target is off this image.
+    """
+    if cmap is None:
+        cmap = FINDER_CMAP
+
+    data = hdr = None
+    try:
+        with fits.open(image_path) as hdul:
+            for hdu in hdul:
+                if hdu.header.get('NAXIS', 0) >= 2:
+                    data = np.array(hdu.data, dtype=float)
+                    hdr = hdu.header.copy()
+                    break
+    except Exception:
+        return None
+    if data is None:
+        return None
+    try:
+        w = WCS(hdr)
+        cd = hdr.get('CDELT2') or hdr.get('CD2_2') or (0.502 / 3600.0)
+        plate = abs(float(cd)) * 3600.0
+        tx, ty = w.all_world2pix(target_ra, target_dec, 0)
+        tx, ty = float(tx), float(ty)
+    except Exception:
+        return None
+    ny, nx = data.shape
+    if not (0 <= tx < nx and 0 <= ty < ny):
+        return None
+
+    fov_arcmin = COUNTERPART_FOV_FACTOR * 2.0 * radius_arcmin
+    half = (fov_arcmin * 60.0 / 2.0) / plate
+    try:
+        cut = Cutout2D(data, (tx, ty), (int(2 * half), int(2 * half)), wcs=w, mode='trim')
+    except Exception:
+        return None
+    cdata, cw = cut.data, cut.wcs
+    if cdata.shape[0] < 10 or cdata.shape[1] < 10:
+        return None
+    ctx, cty = cut.to_cutout_position((tx, ty))
+
+    norm = ImageNormalize(cdata, interval=PercentileInterval(99.5), stretch=LogStretch())
+    fig = plt.figure(figsize=(8.0, 8.6))
+    fig.patch.set_facecolor('black')
+    ax = fig.add_subplot(projection=cw)
+    ax.set_facecolor('black')
+    ax.imshow(cdata, origin='lower', cmap=cmap, norm=norm)
+    try:
+        ra_ax, dec_ax = ax.coords[0], ax.coords[1]
+        ra_ax.set_axislabel('RA (J2000)', color='white', fontsize=13)
+        dec_ax.set_axislabel('Dec (J2000)', color='white', fontsize=13)
+        ra_ax.set_major_formatter('hh:mm:ss')
+        dec_ax.set_major_formatter('dd:mm:ss')
+        for c in (ra_ax, dec_ax):
+            c.set_ticklabel(color='white', size=11)
+            c.set_ticks(color='white')
+        ax.coords.grid(color='white', alpha=0.15, linestyle=':')
+    except Exception:
+        pass
+    for s in ax.spines.values():
+        s.set_color('white')
+    sky = ax.get_transform('fk5')
+
+    # zone (solid black) + margin (dashed black)
+    ax.add_patch(SphericalCircle((target_ra * u.deg, target_dec * u.deg),
+                                 radius_arcmin * u.arcmin, edgecolor='black',
+                                 facecolor='none', lw=2.6, transform=sky,
+                                 zorder=5))
+    ax.add_patch(SphericalCircle((target_ra * u.deg, target_dec * u.deg),
+                                 COUNTERPART_MARGIN_FACTOR * radius_arcmin
+                                 * u.arcmin, edgecolor='black',
+                                 facecolor='none', lw=1.6, linestyle='--',
+                                 transform=sky, zorder=5))
+
+    # SIMBAD counterparts: small white circles + numbered leader lines
+    if counterparts is not None and len(counterparts):
+        for _, r in counterparts.iterrows():
+            try:
+                px, py = cw.all_world2pix(float(r['RA_deg']), float(r['DEC_deg']), 0)
+                px, py = float(px), float(py)
+            except Exception:
+                continue
+            if not (0 <= px < cdata.shape[1] and 0 <= py < cdata.shape[0]):
+                continue
+            rr = 3.0 / plate
+            ax.add_patch(SphericalCircle(
+                (float(r['RA_deg']) * u.deg, float(r['DEC_deg']) * u.deg),
+                3.0 * u.arcsec, edgecolor='white', facecolor='none',
+                lw=1.2, transform=sky, zorder=6))
+            lx, ly = px + 2.2 * rr, py + 2.2 * rr
+            ax.plot([px + 0.9 * rr, lx], [py + 0.9 * rr, ly],
+                    color='white', lw=0.8, zorder=6)
+            ax.text(lx, ly, str(int(r['N'])), color='white', fontsize=10,
+                    ha='left', va='bottom', zorder=7)
+
+    # group members: magenta, labeled S1..Sn, legend under the image
+    legend_lines = []
+    if group_members:
+        for k, m in enumerate(group_members, 1):
+            circ = _member_source_region(dataSRC_path, m['name'], band) \
+                if band else None
+            if circ is not None:
+                mra, mdec, mrad = circ
+                src_note = "measured region"
+            else:
+                mra, mdec, mrad = float(m['ra']), float(m['dec']), 5.0
+                src_note = "CSV coordinates"
+            ax.add_patch(SphericalCircle((mra * u.deg, mdec * u.deg),
+                                         mrad * u.arcsec, edgecolor='magenta',
+                                         facecolor='none', lw=1.8,
+                                         transform=sky, zorder=6))
+            try:
+                px, py = cw.all_world2pix(mra, mdec, 0)
+                ax.text(float(px) + 1.6 * mrad / plate,
+                        float(py) - 1.6 * mrad / plate, f"S{k}",
+                        color='magenta', fontsize=11, ha='left', va='top',
+                        zorder=7)
+            except Exception:
+                pass
+            legend_lines.append(f"S{k} = {m['name']}  ({src_note})")
+
+    # SOURCE X crosshair (offset red ticks)
+    g = max(8.0, 6.0 / plate)
+    ax.plot([ctx + g, ctx + 2 * g], [cty, cty], color='red', lw=1.4, zorder=7)
+    ax.plot([ctx, ctx], [cty + g, cty + 2 * g], color='red', lw=1.4, zorder=7)
+
+    # scale bar: 1' when the frame is large, else 10"
+    h_px, w_px = cdata.shape
+    bar_as = 60.0 if (w_px * plate) > 240.0 else 10.0
+    bar = bar_as / plate
+    bx0, by0 = 0.06 * w_px, 0.05 * h_px
+    ax.plot([bx0, bx0 + bar], [by0, by0], color='white', lw=2.2, zorder=6)
+    ax.text(bx0 + bar / 2, by0 + 0.012 * h_px,
+            ("1'" if bar_as == 60.0 else '10"'), color='white',
+            ha='center', va='bottom', fontsize=11, zorder=6)
+
+    size_line = (f"{w_px}\u00d7{h_px} px "
+                 f"({w_px * plate / 60.0:.1f}\u2032\u00d7"
+                 f"{h_px * plate / 60.0:.1f}\u2032)  |  zone r = "
+                 f"{radius_arcmin:.1f}\u2032")
+    stem = f"{target} — {band.upper()}" if (target and band) else (target or "")
+    ax.set_title(f"{stem}\n{size_line}", color='white', fontsize=13, pad=14)
+
+    if legend_lines:
+        fig.text(0.08, 0.015, "\n".join(legend_lines), color='magenta',
+                 fontsize=10, va='bottom', ha='left')
+        fig.subplots_adjust(bottom=0.06 + 0.022 * len(legend_lines))
+
+    fig.savefig(out_png, dpi=150, facecolor=fig.get_facecolor(), bbox_inches='tight')
+    plt.close(fig)
+    return out_png
+
+
+def make_counterpart_charts_for_target(image_dirs, dataSRC_path, target,
+                                       target_ra, target_dec, radius_arcmin,
+                                       group_members=None, output_root=None,
+                                       bands=None, cmap=None):
+    """
+    All-bands driver: one counterpart chart per band (deepest image first:
+    time-averaged co-add -> summed -> raw, with off-frame fallback like the
+    finder). Products go to <dataSRC>/<target>/SOURCEX/:
+        counterpart_chart_{band}_{target}.png
+        counterparts_{target}.csv (numbered SIMBAD catalog; the numbers match the chart labels
+         
+    The SIMBAD query covers the full chart FOV; the CSV's InZone column
+    marks which counterparts fall inside the error zone itself.
+    """
+    ttag = _sanitize_target_name(str(target)) if target else "target"
+    out_dir = os.path.join(dataSRC_path, ttag, "SOURCEX")
+    os.makedirs(out_dir, exist_ok=True)
+
+    print("=" * 70)
+    print(f"COUNTERPART CHART [{target}]  zone r = {radius_arcmin:.1f}' "
+          f"(margin x{COUNTERPART_MARGIN_FACTOR}, "
+          f"FOV x{COUNTERPART_FOV_FACTOR} of the zone diameter)")
+    print("=" * 70)
+
+    query_r = COUNTERPART_FOV_FACTOR * radius_arcmin   # to the FOV edge
+    cache_csv = os.path.join(out_dir, f"counterparts_{ttag}.csv")
+    counterparts = query_simbad_counterparts(
+        target_ra, target_dec, query_radius_arcmin=query_r,
+        zone_radius_arcmin=radius_arcmin, cache_csv=cache_csv)
+    n_zone = int(counterparts['InZone'].sum()) if len(counterparts) else 0
+    print(f"  catalog: {len(counterparts)} counterpart(s) on the chart, "
+          f"{n_zone} inside the zone -> {cache_csv}")
+    if group_members:
+        print(f"  group members overlaid: "
+              f"{', '.join(m['name'] for m in group_members)}")
+
+    if bands is None:
+        bands = tuple(BANDS)
+    tag = f"_{ttag}"
+    tavg_dir = (os.path.join(output_root, "TimeAvg") if output_root
+                else None)
+    made = []
+    for band in bands:
+        candidates = []
+        if tavg_dir:
+            p = os.path.join(tavg_dir, f"{band}_timeavg_summed{tag}.fits")
+            if os.path.exists(p):
+                candidates.append(p)
+        for obsid, img_dir in image_dirs:
+            p = os.path.join(img_dir, f"{band}_ex_summed.fits")
+            if os.path.exists(p):
+                candidates.append(p)
+        for obsid, img_dir in image_dirs:
+            for nm in (f"sw{obsid}{band}_sk.img",
+                       f"sw{obsid}{band}_sk.img.gz"):
+                p = os.path.join(img_dir, nm)
+                if os.path.exists(p):
+                    candidates.append(p)
+        if not candidates:
+            print(f" counterpart chart: no usable {band} image")
+            continue
+        out_png = os.path.join(out_dir,
+                               f"counterpart_chart_{band}{tag}.png")
+        for cand in candidates:
+            ok = make_counterpart_chart(
+                cand, dataSRC_path, target, target_ra, target_dec,
+                radius_arcmin, out_png, counterparts=counterparts,
+                group_members=group_members, band=band, cmap=cmap)
+            if ok:
+                made.append(out_png)
+                print(f"  counterpart chart: {out_png} "
+                      f"(from {os.path.basename(cand)})")
+                break
+    if not made:
+        print(" counterpart chart: could not produce any chart "
+              "(no usable images, or target off every frame)")
+    return made
+
+
 
 
 WATCHDOG = StallWatchdog(stall_seconds=300, dump_path="C:/Users/05ble/OneDrive/Desktop/Watchdog/pipeline_stall_dump.txt")
