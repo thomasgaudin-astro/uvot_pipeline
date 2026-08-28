@@ -148,25 +148,17 @@ while run_pipeline == True:
             print('uvotdetect was skipped.')
         else:
             print("Running uvotdetect.")
-            for path in tqdm(all_filepaths):
-                subpath = os.path.join(filepath, path)
-                
-                sourcepath_fill = f'uvot/image/sw{path}uw1_sk.img.gz'
-                outpath_fill = 'uvot/image/detect.fits'
-                exppath_fill = f'uvot/image/sw{path}uw1_ex.img.gz'
-                detectpath_fill = 'uvot/image/detect.reg'
-                
-                full_sourcepath = os.path.join(subpath, sourcepath_fill)
-                full_outpath = os.path.join(subpath, outpath_fill)
-                full_exppath = os.path.join(subpath, exppath_fill)
-                full_detectpath = os.path.join(subpath, detectpath_fill)
 
-                uvotdetect_command = up.create_uvotdetect_bash_command(full_sourcepath, full_outpath, full_exppath, full_detectpath)
+            for path in tqdm(all_filepaths):
+                
+                detect = FTOOLSCommands(sc_tile, obsid=path, source_name=None, detect=True)
+
+                uvotdetect_command = detect.uvotdetect_command
 
                 if args.verbose:
-                    up.run_uvotdetect_verbose(uvotdetect_command)
+                    detect.run_uvotdetect_verbose(uvotdetect_command)
                 else:
-                    up.run_uvotdetect(uvotdetect_command)
+                    detect.run_uvotdetect(uvotdetect_command)
         
             print("uvotdetect is complete.\n")
     

@@ -3,7 +3,7 @@ import os
 import subprocess
 
 class FTOOLSCommands():
-    def __init__(self, sc_tile, obsid, source_name, detect=False, fkeyprint=False, unicorr=False, source=False, ref_frame=None, obs_frame=None):
+    def __init__(self, sc_tile, obsid, detect=False, fkeyprint=False, unicorr=False, source=False, source_name=None, ref_frame=None, obs_frame=None):
 
         filepath = f'./S-CUBED/{sc_tile}/UVOT'
         
@@ -27,8 +27,9 @@ class FTOOLSCommands():
         self.obs_frame = obs_frame
         self.obspath = os.path.join(filepath, obsid, 'uvot/image')
 
-        self.source_reg = f'{source_name}_source.reg'
-        self.bkg_reg = f'{source_name}_bkg.reg'
+        if source_name:
+            self.source_reg = f'{source_name}_source.reg'
+            self.bkg_reg = f'{source_name}_bkg.reg'
 
         if detect == True:
             self.uvotdetect_command = self.create_uvotdetect_bash_command(self.source_path, 
