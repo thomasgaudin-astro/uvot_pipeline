@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
 
