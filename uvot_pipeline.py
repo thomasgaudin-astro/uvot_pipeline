@@ -30,32 +30,45 @@ class DownloadError(Exception):
     pass
 
 class FTOOLSCommands():
-    def __init__(self, source_path=None, output_path=None, exposure_path=None, reg_path=None, ref_frame=None, obs_frame=None, obspath=None):
-        self.source_path = source_path
-        self.output_path = output_path
-        self.exposure_path = exposure_path
-        self.reg_path = reg_path
+    def __init__(self, sc_tile, obsid, detect=False, fkeyprint=False, unicorr=False, ref_frame=None, obs_frame=None):
+
+        filepath = f'./S-CUBED/{sc_tile}/UVOT'
+        
+        subpath = os.path.join(filepath, obsid)
+                
+        sourcepath_fill = f'uvot/image/sw{obsid}uw1_sk.img.gz'
+        outpath_fill = 'uvot/image/detect.fits'
+        exppath_fill = f'uvot/image/sw{obsid}uw1_ex.img.gz'
+        detectpath_fill = 'uvot/image/detect.reg'
+        extracted_sourcepath_fill = f'uvot/image/sw{obsid}uw1_sk.img'
+        source_outfiled_fill = f'uvot/image/{obsid}_source.fits'
+
+        self.source_path = os.path.join(subpath, sourcepath_fill)
+        self.output_path = os.path.join(subpath, outpath_fill)
+        self.exposure_path = os.path.join(subpath, exppath_fill)
+        self.reg_path = os.path.join(subpath, detectpath_fill)
+        self.extracted_source_path = os.path.join(subpath, extracted_sourcepath_fill)
 
         self.ref_frame = ref_frame
         self.obs_frame = obs_frame
-        self.obspath = obspath
+        self.obspath = os.path.join(filepath, obsid, 'uvot/image')
 
-        if self.source_path and self.output_path and self.exposure_path and self.reg_path:
+        if detect == True:
             self.uvotdetect_command = self.create_uvotdetect_bash_command(self.source_path, 
                                                                           self.output_path, 
                                                                           self.exposure_path, 
                                                                           self.reg_path
                                                                           )
-        if self.source_path:
+        if self.fkeyprint == True:
             self.fkeyprint_command = self.create_fkeyprint_bash_command(self.source_path)
 
-        if self.ref_frame and self.obs_frame:
+        if unicorr == True:
             self.uvotunicorr_command = self.create_uvotunicorr_bash_command(self.ref_frame, 
                                                                             self.obs_frame, 
                                                                             self.obspath
                                                                             )
 
-    def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
+    def create_uvotdetect_bash_command(self, source_path, output_path, exposure_path, reg_path):
 
         # Construct bash command
         bash_command = f"""
@@ -199,10 +212,6 @@ class FTOOLSCommands():
         return result.stdout
 
     def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
-
-        trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
-        obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img'
-        exp_filepath  = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_ex.img.gz'
         
         bash_command = f"""
             bash -c '
