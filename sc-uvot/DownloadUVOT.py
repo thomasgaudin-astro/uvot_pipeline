@@ -1,5 +1,4 @@
 import os
-import subprocess
 from swifttools.swift_too import TOO, Resolve, ObsQuery, Data
 
 class DownloadUVOT():
