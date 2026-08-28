@@ -12,8 +12,14 @@ class DownloadUVOT():
 
         self.undownloaded_files = self.check_for_undownloaded_files(tile_name, new_tile_name, tile_ra, tile_dec)
 
+        print(f'Found {len(self.undownloaded_files)} that need to be downloaded.')
+
         if len(self.undownloaded_files) > 0:
+            print('Downloading new files.')
             self.download_new_files(self.undownloaded_files, tile_name, tile_ra, tile_dec)
+            print('All new files downloaded.\n')
+        else:
+            print('No new files to download. Moving on.\n')
 
     def check_for_undownloaded_files(self, tile_name, new_tile_name, tile_ra, tile_dec):
 

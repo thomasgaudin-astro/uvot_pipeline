@@ -18,6 +18,8 @@ from sh import gunzip
 from astropy.units import UnitsWarning
 from astropy.table import QTable, Table
 
+from sc_uvot import DownloadUVOT, FTOOLSCommands
+
 
 parser = argparse.ArgumentParser(description='Options for Clean Tiles Script.')
 
@@ -132,16 +134,7 @@ while run_pipeline == True:
 
         print(f'Downloading new data for Tile {sc_tile}.')
 
-        undownloaded_files = up.check_for_undownloaded_files(sc_tile, new_tile_name, tile_ra, tile_dec)
-
-        print(f'Found {len(undownloaded_files)} that need to be downloaded.')
-        if len(undownloaded_files) > 0:
-            print('Downloading new files.')
-            up.download_new_files(undownloaded_files, sc_tile, tile_ra, tile_dec)
-            print('All new files downloaded.\n')
-        else:
-            print('No new files to download. Moving on.\n')
-
+        download = DownloadUVOT(sc_tile, new_tile_name, tile_ra, tile_dec)
     
         print(f"Cleaning Data for Tile {sc_tile}.")
         
