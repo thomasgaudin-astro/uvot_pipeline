@@ -12,8 +12,15 @@ from astropy.io import fits
 class RemoveSmeared():
     def __init__(self, tile_name):
         self.filepath = f'./S-CUBED/{tile_name}/UVOT'
+
         self.smeared = self.detect_smeared_frames(self.filepath)
+
+        print(f"Found {len(smeared_frames)} Smeared Frames.")
+        print("Removing Smeared Frames.")
+
         self.remove_smeared(self.filepath, self.smeared)
+
+        print("Smear Removal is complete.\n")
 
     def detect_smeared_frames(self, filepath):
 
