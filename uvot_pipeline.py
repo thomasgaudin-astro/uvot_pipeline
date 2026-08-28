@@ -29,283 +29,309 @@ class DownloadError(Exception):
     """Raise when requests status quo does not return 200."""
     pass
 
-def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
+class FTOOLSCommands():
+    def __init__(self, source_path=None, output_path=None, exposure_path=None, reg_path=None, ref_frame=None, obs_frame=None, obspath=None):
+        self.source_path = source_path
+        self.output_path = output_path
+        self.exposure_path = exposure_path
+        self.reg_path = reg_path
 
-    # Construct bash command
-    bash_command = f"""
-    bash -c '
-    source {os.environ['HEADAS']}/headas-init.sh
-    uvotdetect \\
-        infile={source_path} \\
-        outfile={output_path} \\
-        expfile={exposure_path} \\
-        threshold=3 \\
-        sexfile=DEFAULT \\
-        plotsrc=NO \\
-        regfile={reg_path} \\
-        zerobkg=0.03 \\
-        expopt=BETA \\
-        calibrate=YES \\
-        clobber=YES
-    '
-    """
+        self.ref_frame = ref_frame
+        self.obs_frame = obs_frame
+        self.obspath = obspath
 
-    return bash_command
+        if self.source_path and self.output_path and self.exposure_path and self.reg_path:
+            self.uvotdetect_command = self.create_uvotdetect_bash_command(self.source_path, 
+                                                                          self.output_path, 
+                                                                          self.exposure_path, 
+                                                                          self.reg_path
+                                                                          )
+        if self.source_path:
+            self.fkeyprint_command = self.create_fkeyprint_bash_command(self.source_path)
 
-def run_uvotdetect(uvotdetect_command):
+        if self.ref_frame and self.obs_frame:
+            self.uvotunicorr_command = self.create_uvotunicorr_bash_command(self.ref_frame, 
+                                                                            self.obs_frame, 
+                                                                            self.obspath
+                                                                            )
 
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotdetect_command],
-        capture_output=True,
-        text=True
-    )
+    def create_uvotdetect_bash_command(source_path, output_path, exposure_path, reg_path):
 
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotdetect_verbose(uvotdetect_command):
-
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotdetect_command],
-        capture_output=True,
-        text=True
-    )
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-    
-def create_fkeyprint_bash_command(source_path):
-
-    fits_path = os.path.abspath(source_path)
-    
-    # print("Absolute path:", fits_path)
-    # print("Exists:", os.path.exists(fits_path))  # Confirm it actually exists!
-    
-    keyword = "ASPCORR"
-    
-    command = f"""
-    source {os.environ['HEADAS']}/headas-init.sh
-    fkeyprint "{fits_path}" {keyword}
-    """
-    
-    return command
-
-def run_fkeyprint(fkeyprint_command):
-
-    result = subprocess.run(
-        ['bash', '-i', '-c', fkeyprint_command],
-        capture_output=True,
-        text=True
-    )
-    
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_fkeyprint_verbose(fkeyprint_command):
-
-    result = subprocess.run(
-        ['bash', '-i', '-c', fkeyprint_command],
-        capture_output=True,
-        text=True
-    )
-    
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
-
-    if obspath:
-        ref_filepath = obspath+f'/sw{ref_frame}uw1_sk.img[1]'
-        obs_filepath = obspath+f'/sw{obs_frame}uw1_sk.img[1]'
-        ref_reg_filepath = obspath+'/ref.reg'
-        obs_reg_filepath = obspath+'/obs.reg'
-    else:
-        ref_filepath = f'sw{ref_frame}uw1_sk.img[1]'
-        obs_filepath = f'sw{obs_frame}uw1_sk.img[1]'
-        ref_reg_filepath = 'ref.reg'
-        obs_reg_filepath = 'obs.reg'
-    
-    bash_command = f"""
+        # Construct bash command
+        bash_command = f"""
         bash -c '
         source {os.environ['HEADAS']}/headas-init.sh
-        uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
+        uvotdetect \\
+            infile={source_path} \\
+            outfile={output_path} \\
+            expfile={exposure_path} \\
+            threshold=3 \\
+            sexfile=DEFAULT \\
+            plotsrc=NO \\
+            regfile={reg_path} \\
+            zerobkg=0.03 \\
+            expopt=BETA \\
+            calibrate=YES \\
+            clobber=YES
         '
         """
 
-    return bash_command
+        return bash_command
 
-def create_uvotunicorr_too_bash_command(ref_frame, obs_frame, band, snapshot, obspath=None):
+    def run_uvotdetect(uvotdetect_command):
 
-    if obspath:
-        ref_filepath = obspath+f'/sw{ref_frame}{band}_sk.img[{snapshot}]'
-        obs_filepath = obspath+f'/sw{obs_frame}{band}_sk.img[{snapshot}]'
-        ref_reg_filepath = obspath+'/ref.reg'
-        obs_reg_filepath = obspath+'/obs.reg'
-    else:
-        ref_filepath = f'sw{ref_frame}{band}_sk.img[{snapshot}]'
-        obs_filepath = f'sw{obs_frame}{band}_sk.img[{snapshot}]'
-        ref_reg_filepath = 'ref.reg'
-        obs_reg_filepath = 'obs.reg'
+        # Run the command
+        result = subprocess.run(
+            ['bash', '-i', '-c', uvotdetect_command],
+            capture_output=True,
+            text=True
+        )
+
+        # print("STDOUT:\n", result.stdout)
+        # print("STDERR:\n", result.stderr)
+
+        return result.stdout
+
+    def run_uvotdetect_verbose(uvotdetect_command):
+
+        # Run the command
+        result = subprocess.run(
+            ['bash', '-i', '-c', uvotdetect_command],
+            capture_output=True,
+            text=True
+        )
+
+        print("STDOUT:\n", result.stdout)
+        print("STDERR:\n", result.stderr)
+
+        return result.stdout
     
-    bash_command = f"""
-        bash -c '
+    def create_fkeyprint_bash_command(source_path):
+
+        fits_path = os.path.abspath(source_path)
+        
+        # print("Absolute path:", fits_path)
+        # print("Exists:", os.path.exists(fits_path))  # Confirm it actually exists!
+        
+        keyword = "ASPCORR"
+        
+        command = f"""
         source {os.environ['HEADAS']}/headas-init.sh
-        uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
-        '
+        fkeyprint "{fits_path}" {keyword}
         """
+        
+        return command
 
-    return bash_command
+    def run_fkeyprint(fkeyprint_command):
 
-def run_uvotunicorr(uvotunicorr_command):
+        result = subprocess.run(
+            ['bash', '-i', '-c', fkeyprint_command],
+            capture_output=True,
+            text=True
+        )
+        
+        # print("STDOUT:\n", result.stdout)
+        # print("STDERR:\n", result.stderr)
 
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotunicorr_command],
-        capture_output=True,
-        text=True
-    )
+        return result.stdout
 
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
+    def run_fkeyprint_verbose(fkeyprint_command):
 
-    return result.stdout
+        result = subprocess.run(
+            ['bash', '-i', '-c', fkeyprint_command],
+            capture_output=True,
+            text=True
+        )
+        
+        print("STDOUT:\n", result.stdout)
+        print("STDERR:\n", result.stderr)
 
-def run_uvotunicorr_verbose(uvotunicorr_command):
+        return result.stdout
 
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotunicorr_command],
-        capture_output=True,
-        text=True
-    )
+    def create_uvotunicorr_bash_command(ref_frame, obs_frame, obspath=None):
 
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None):
-    
-    infile_path = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
-
-    if file_type == 'sk':
-        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
-    
-    if file_type == 'ex':
-        outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
-    
-    if exclude == None:
+        if obspath:
+            ref_filepath = obspath+f'/sw{ref_frame}uw1_sk.img[1]'
+            obs_filepath = obspath+f'/sw{obs_frame}uw1_sk.img[1]'
+            ref_reg_filepath = obspath+'/ref.reg'
+            obs_reg_filepath = obspath+'/obs.reg'
+        else:
+            ref_filepath = f'sw{ref_frame}uw1_sk.img[1]'
+            obs_filepath = f'sw{obs_frame}uw1_sk.img[1]'
+            ref_reg_filepath = 'ref.reg'
+            obs_reg_filepath = 'obs.reg'
+        
         bash_command = f"""
             bash -c '
             source {os.environ['HEADAS']}/headas-init.sh
-            uvotimsum infile="{infile_path}" outfile="{outfile_path}"
+            uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
             '
             """
-    else:
+
+        return bash_command
+
+# def create_uvotunicorr_too_bash_command(ref_frame, obs_frame, band, snapshot, obspath=None):
+
+#     if obspath:
+#         ref_filepath = obspath+f'/sw{ref_frame}{band}_sk.img[{snapshot}]'
+#         obs_filepath = obspath+f'/sw{obs_frame}{band}_sk.img[{snapshot}]'
+#         ref_reg_filepath = obspath+'/ref.reg'
+#         obs_reg_filepath = obspath+'/obs.reg'
+#     else:
+#         ref_filepath = f'sw{ref_frame}{band}_sk.img[{snapshot}]'
+#         obs_filepath = f'sw{obs_frame}{band}_sk.img[{snapshot}]'
+#         ref_reg_filepath = 'ref.reg'
+#         obs_reg_filepath = 'obs.reg'
+    
+#     bash_command = f"""
+#         bash -c '
+#         source {os.environ['HEADAS']}/headas-init.sh
+#         uvotunicorr obsfile={obs_filepath} reffile={ref_filepath} obsreg={obs_reg_filepath} refreg={ref_reg_filepath}
+#         '
+#         """
+
+#     return bash_command
+
+    def run_uvotunicorr(uvotunicorr_command):
+
+        # Run the command
+        result = subprocess.run(
+            ['bash', '-i', '-c', uvotunicorr_command],
+            capture_output=True,
+            text=True
+        )
+
+        # print("STDOUT:\n", result.stdout)
+        # print("STDERR:\n", result.stderr)
+
+        return result.stdout
+
+    def run_uvotunicorr_verbose(uvotunicorr_command):
+
+        # Run the command
+        result = subprocess.run(
+            ['bash', '-i', '-c', uvotunicorr_command],
+            capture_output=True,
+            text=True
+        )
+
+        print("STDOUT:\n", result.stdout)
+        print("STDERR:\n", result.stderr)
+
+        return result.stdout
+
+    # def create_uvotimsum_too_bash_command(source_name, obsid, band, file_type, exclude=None):
+        
+    #     infile_path = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_{file_type}.img.gz'
+
+    #     if file_type == 'sk':
+    #         outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
+        
+    #     if file_type == 'ex':
+    #         outfile_path = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
+        
+    #     if exclude == None:
+    #         bash_command = f"""
+    #             bash -c '
+    #             source {os.environ['HEADAS']}/headas-init.sh
+    #             uvotimsum infile="{infile_path}" outfile="{outfile_path}"
+    #             '
+    #             """
+    #     else:
+    #         bash_command = f"""
+    #             bash -c '
+    #             source {os.environ['HEADAS']}/headas-init.sh
+    #             uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude={exclude}
+    #             '
+    #             """
+
+    #     return bash_command
+
+    # def run_uvotimsum(uvotimsum_command):
+
+    #     # Run the command
+    #     result = subprocess.run(
+    #         ['bash', '-i', '-c', uvotimsum_command],
+    #         capture_output=True,
+    #         text=True
+    #     )
+
+    #     # print("STDOUT:\n", result.stdout)
+    #     # print("STDERR:\n", result.stderr)
+
+    #     return result.stdout
+
+    # def run_uvotimsum_verbose(uvotimsum_command):
+
+    #     # Run the command
+    #     result = subprocess.run(
+    #         ['bash', '-i', '-c', uvotimsum_command],
+    #         capture_output=True,
+    #         text=True
+    #     )
+
+    #     print("STDOUT:\n", result.stdout)
+    #     print("STDERR:\n", result.stderr)
+
+    #     return result.stdout
+
+    def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
+
+        trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
+        obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img'
+        exp_filepath  = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_ex.img.gz'
+        
         bash_command = f"""
             bash -c '
             source {os.environ['HEADAS']}/headas-init.sh
-            uvotimsum infile="{infile_path}" outfile="{outfile_path}" exclude={exclude}
-            '
-            """
-
-    return bash_command
-
-def run_uvotimsum(uvotimsum_command):
-
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotimsum_command],
-        capture_output=True,
-        text=True
-    )
-
-    # print("STDOUT:\n", result.stdout)
-    # print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def run_uvotimsum_verbose(uvotimsum_command):
-
-    # Run the command
-    result = subprocess.run(
-        ['bash', '-i', '-c', uvotimsum_command],
-        capture_output=True,
-        text=True
-    )
-
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    return result.stdout
-
-def create_uvotsource_bash_command(tile_name, obsid, source_reg_file, bkg_reg_file, target_name):
-
-    trunc_obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/'
-    obs_filepath = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_sk.img'
-    exp_filepath  = f'./S-CUBED/{tile_name}/UVOT/{obsid}/uvot/image/sw{obsid}uw1_ex.img.gz'
-    
-    bash_command = f"""
-        bash -c '
-        source {os.environ['HEADAS']}/headas-init.sh
-        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath + target_name}_source.fits" cleanup=YES clobber=YES chatter=1
-
-        '
-        """
-
-    return bash_command
-
-def create_uvotsource_too_bash_command(source_name, obsid, band, snapshot, source_reg_file, bkg_reg_file):
-
-    trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
-    obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
-    exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
-
-    if snapshot == 1:
-    
-        bash_command = f"""
-            bash -c '
-            source {os.environ['HEADAS']}/headas-init.sh
-            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
-
-            '
-            """
-    else:
-        bash_command = f"""
-            bash -c '
-            source {os.environ['HEADAS']}/headas-init.sh
-            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source{snapshot}.fits" cleanup=YES clobber=YES chatter=1
+            uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath + target_name}_source.fits" cleanup=YES clobber=YES chatter=1
 
             '
             """
 
-    return bash_command
+        return bash_command
 
-def create_uvotsource_summed_bash_command(source_name, obsid, band, source_reg_file, bkg_reg_file):
+# def create_uvotsource_too_bash_command(source_name, obsid, band, snapshot, source_reg_file, bkg_reg_file):
 
-    trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
-    obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
-    exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
+#     trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
+#     obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_sk.img[{snapshot}]'
+#     exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/sw{obsid}{band}_ex.img.gz[{snapshot}]'
+
+#     if snapshot == 1:
     
-    bash_command = f"""
-        bash -c '
-        source {os.environ['HEADAS']}/headas-init.sh
-        uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
+#         bash_command = f"""
+#             bash -c '
+#             source {os.environ['HEADAS']}/headas-init.sh
+#             uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
 
-        '
-        """
+#             '
+#             """
+#     else:
+#         bash_command = f"""
+#             bash -c '
+#             source {os.environ['HEADAS']}/headas-init.sh
+#             uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source{snapshot}.fits" cleanup=YES clobber=YES chatter=1
 
-    return bash_command
+#             '
+#             """
+
+#     return bash_command
+
+# def create_uvotsource_summed_bash_command(source_name, obsid, band, source_reg_file, bkg_reg_file):
+
+#     trunc_obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/'
+#     obs_filepath = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_summed.fits'
+#     exp_filepath  = f'./{source_name}/TOO/{obsid}/uvot/image/{band}_ex_summed.fits'
+    
+#     bash_command = f"""
+#         bash -c '
+#         source {os.environ['HEADAS']}/headas-init.sh
+#         uvotsource image="{obs_filepath}" srcreg="{source_reg_file}" bkgreg="{bkg_reg_file}" sigma=5 zerofile=CALDB coinfile=CALDB psffile=CALDB lssfile=CALDB expfile="{exp_filepath}" syserr=NO frametime=DEFAULT apercorr=NONE output=ALL outfile="{trunc_obs_filepath}{band}_source.fits" cleanup=YES clobber=YES chatter=1
+
+#         '
+#         """
+
+#     return bash_command
 
 def run_uvotsource(uvotsource_command):
 
