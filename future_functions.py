@@ -116,3 +116,19 @@ def create_uvotsource_summed_bash_command(source_name, obsid, band, source_reg_f
         """
 
     return bash_command
+
+def parallel_uvotdetect(filepath, all_filepaths, verbose=False):
+    with tqdm(total=len(all_filepaths)) as pbar:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(single_uvotdetect, filepath, path, verbose) for path in all_filepaths]
+            for future in as_completed(futures):
+                pbar.update(1)
+                yield future.result()
+
+def parallel_uvotsource(all_filepaths, tile, source_name, source_reg, bkg_reg, verbose=False):
+    with tqdm(total=len(all_filepaths)) as pbar:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(single_uvotsource, tile, path, source_name, source_reg, bkg_reg, verbose) for path in all_filepaths]
+            for future in as_completed(futures):
+                pbar.update(1)
+                yield future.result()
