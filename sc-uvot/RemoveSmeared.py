@@ -11,13 +11,11 @@ from astropy.io import fits
 
 class RemoveSmeared():
     def __init__(self, tile_name):
-        self.tile_name = tile_name
-        self.smeared = self.detect_smeared_frames(self.tile_name)
-        self.remove_smeared(self.tile_name, self.smeared)
+        self.filepath = f'./S-CUBED/{tile_name}/UVOT'
+        self.smeared = self.detect_smeared_frames(self.filepath)
+        self.remove_smeared(self.filepath, self.smeared)
 
-    def detect_smeared_frames(self, tile_name):
-
-        filepath = f'./S-CUBED/{tile_name}/UVOT'
+    def detect_smeared_frames(self, filepath):
 
         smeared = []
         
@@ -50,9 +48,7 @@ class RemoveSmeared():
 
         return smeared
 
-    def remove_smeared(self, tile_name, smeared_obs):
-
-        filepath = f'./S-CUBED/{tile_name}/UVOT'
+    def remove_smeared(self, filepath, smeared_obs):
 
         for smear in smeared_obs:
         
