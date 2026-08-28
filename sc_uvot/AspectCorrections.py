@@ -1,25 +1,98 @@
 # -*- coding: utf-8 -*-
 import os
 import re
+import shutil
 import tqdm
+
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.table import QTable
+import astropy.units as u
 
 from .FTOOLSCommands import create_fkeyprint_bash_command, run_fkeyprint, run_fkeyprint_verbose
 
 class AspectCorrections():
-    def __init__(self, tile_name, verbose=False):
+    def __init__(self, tile_name, verbose=False, remove_bad=False, num_stars=200,  side_buffer=10):
         self.tile_name = tile_name
         self.verbose = verbose
+        self.remove_bad = remove_bad
+        self.num_stars = num_stars
+        self.side_buffer = side_buffer
 
         self.filepath = f'./S-CUBED/{tile_name}/UVOT' 
 
+        # check the aspect correction status of all the observations in the tile 
+        # return a list of uncorrected observations and a list of direct corrected observations
+        # return the number of uncorrected observations
         if self.verbose == True:
             self.aspect_uncorrected = self.check_aspect_correction_verbose(self.filepath)
             self.aspect_direct = self.check_direct_corrections_verbose(self.filepath)
         else:
             self.aspect_uncorrected = self.check_aspect_correction(self.filepath)
             self.aspect_direct = self.check_direct_corrections(self.filepath)
+        self.num_uncorrected = len(self.aspect_uncorrected)
 
-        
+        # honestly can't remember why these lines are needed, but they are
+        self.new_all_filepaths = sorted(os.listdir(self.filepath))
+        if '.DS_Store' in self.new_all_filepaths:
+            self.new_all_filepaths.remove('.DS_Store')
+
+        print(f"Found {self.num_uncorrected} Frames in need of Aspect Correction.\n")
+
+        # if there are no frames in need of aspect correction, then we are done
+        if self.num_uncorrected == 0:
+            print("No frames to correct.\n")
+
+        else:
+            # if there are frames to correct, but we want them removed, then remove them and move on      
+            if self.remove_bad == True:
+                print("Removing Bad Frames.")
+                
+                self.out_filepath = f'./S-CUBED/{self.tile_name}/AspectNone'
+                self.remove_aspect_uncorrected(self.filepath, self.out_filepath, self.aspect_uncorrected_frames)
+
+            # most of the time we want them corrected, and there is a lot needed to make that happen
+            else:
+                print("Correcting Bad Frames.")
+                
+                #list the direct frames
+                direct_frames = [frame for frame in self.new_all_filepaths if frame in self.aspect_direct]
+                
+                #reference frame will be first corrected frame that exists
+                self.ref_frame = self.aspect_direct[0]
+                self.ref_path = os.path.join(self.filepath, self.ref_frame, 'uvot/image/detect.fits')
+    
+                self.detect_frame_exists = os.path.exists(self.ref_path)
+
+                #define a counter in case we need to go searching for a reference frame 
+                counter = 0
+
+                #if first reference frame didn't exist, then we go grab the first one that does 
+                while self.detect_frame_exists == False:
+    
+                    counter += 1
+                    
+                    print(len(self.aspect_direct))
+                    print(counter)
+    
+                    self.ref_frame = self.aspect_direct[counter]
+                    self.ref_path = os.path.join(self.filepath, self.ref_frame, 'uvot/image/detect.fits')
+
+                    #when we find a refence frame that exists, break the loop
+                    self.detect_frame_exists = os.path.exists(self.ref_path)
+
+                print(f'The Reference Frame is {self.ref_frame}')
+                #generate path to the reference frame detect.fits
+                self.ref_detect_path = f'{filepath}/{self.ref_frame}/uvot/image/detect.fits'
+                #generate path to reference image
+                self.ref_file_path = f'{filepath}/{self.ref_frame}/uvot/image/sw{self.ref_frame}uw1_sk.img'
+                #find brightest stars in the center of the reference frame
+                self.ref_bright_stars = self.find_brightest_central_stars(self.ref_detect_path, num_stars=self.num_stars, side_buffer=self.side_buffer)
+
+                
+
+
+
 
 
     def check_aspect_correction(self, filepath):
@@ -148,7 +221,7 @@ class AspectCorrections():
 
         return aspect_direct
 
-    def remove_aspect_uncorrected(in_filepath, out_filepath, aspect_uncorrected_tiles):
+    def remove_aspect_uncorrected(self, in_filepath, out_filepath, aspect_uncorrected_tiles):
 
         for auct in tqdm(aspect_uncorrected_tiles):
         
@@ -160,7 +233,7 @@ class AspectCorrections():
             else:
                 shutil.move(source, destination)
             
-    def find_brightest_central_stars(detect_path, num_stars=15, side_buffer=5):
+    def find_brightest_central_stars(self, detect_path, num_stars=200, side_buffer=10):
 
         #open detect.fits and read header into dataframe
         with fits.open(detect_path) as hdul:
