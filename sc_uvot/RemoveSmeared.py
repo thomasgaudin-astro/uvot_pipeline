@@ -20,8 +20,6 @@ class RemoveSmeared():
 
         self.remove_smeared(self.filepath, self.smeared)
 
-        print("Smear Removal is complete.\n")
-
     def detect_smeared_frames(self, filepath):
 
         smeared = []
