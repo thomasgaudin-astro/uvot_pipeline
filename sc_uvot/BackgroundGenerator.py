@@ -1,11 +1,20 @@
 import fitsio
+import sep
+
+import matplotlib.pyplot as plt
 
 import numpy as np
 
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
+import astropy.units as u
 from astropy.wcs import WCS
 
+from matplotlib.patches import Circle, Ellipse
+
 from pathlib import Path
+
+from regions import EllipseSkyRegion, CircleSkyRegion
 
 
 
@@ -31,7 +40,59 @@ class BackgroundGenerator():
                                                          plotsrc=self.plotsrc
                                                          )
 
-        
+    def index_to_percentage(self, i, n, steps=10, phrase="% Complete"):
+        """
+        Emit a progress percentage at evenly spaced index positions.
+
+        The function divides the index range [0, n-1] into `steps` evenly spaced
+        checkpoints. When the current index `i` matches one of those checkpoints,
+        a formatted percentage string is printed. Otherwise, nothing happens.
+
+        Parameters
+        ----------
+        i : int
+            Current index (must satisfy 0 <= i < n).
+        n : int
+            Total number of indices.
+        steps : int, optional
+            Number of progress updates to emit (default is 10).
+            If steps > n, it is clamped to n.
+        phrase : str, optional
+            Suffix appended to the percentage output
+            (default is "% Complete").
+
+        Raises
+        ------
+        ValueError
+            If `i` is outside the valid range or `steps` is not positive.
+
+        Example
+        -------
+        >>> for i in range(10):
+        ...     index_to_percentage(i, 10, steps=4)
+        0% Complete
+        20% Complete
+        50% Complete
+        70% Complete
+        """
+        if not (0 <= i < n):
+            raise ValueError(f"i must be in range [0, {n - 1}]")
+        if steps <= 0:
+            raise ValueError("steps must be positive")
+
+        steps = min(steps, n)
+
+        # Indices at which progress updates should be emitted
+        step_indices = np.linspace(0, n - 1, num=steps, dtype=int)
+
+        # Corresponding percentage values (never reaches 100%)
+        percentages = np.linspace(0, 100 * (n - 1) / n, num=steps)
+
+        # Emit progress only at step boundaries
+        for idx, step_i in enumerate(step_indices):
+            if i == step_i:
+                print(f"{int(percentages[idx])}{phrase}")
+                break
 
 
     def find_sources(self, filename, outreg="excess.reg", threshold=1,
@@ -234,7 +295,7 @@ class BackgroundGenerator():
 
         return excess, excess_pxl
 
-    def Make_Ellipse(RA, DEC, SMaj, SMin, Angl,
+    def Make_Ellipse(self,RA, DEC, SMaj, SMin, Angl,
                     sky_frame="fk5",
                     ra_unit=u.deg,
                     dec_unit=u.deg,
@@ -309,7 +370,7 @@ class BackgroundGenerator():
 
         return regions
 
-    def Make_Circle(RA, DEC, R,
+    def Make_Circle(self, RA, DEC, R,
                     sky_frame="fk5",
                     ra_unit=u.deg,
                     dec_unit=u.deg,
@@ -371,7 +432,7 @@ class BackgroundGenerator():
 
         return regions
 
-    def angles_to_ellipses(target_center, ellipse_regions):
+    def angles_to_ellipses(self, target_center, ellipse_regions):
         """
         Returns array of position angles (east of north)
         from target_center to each ellipse center.
@@ -385,7 +446,7 @@ class BackgroundGenerator():
 
         return target_center.position_angle(centers)
 
-    def circle_intersects_ellipse(circle_center, circle_radius, ellipse, wcs, n_samples=72):
+    def circle_intersects_ellipse(self, circle_center, circle_radius, ellipse, wcs, n_samples=72):
         """
         Returns True if circle intersects ellipse.
         Uses boundary sampling + ellipse.contains().
@@ -409,12 +470,15 @@ class BackgroundGenerator():
 
         return np.any(contained)
 
-    def circle_intersects_circle(c1, r1, c2, r2):
+    def circle_intersects_circle(self, c1, r1, c2, r2):
         # Two circles intersect (or overlap) if the angular separation between
         # their centers is less than the sum of their radii.
         return c1.separation(c2) < (r1 + r2)
 
-    def find_valid_background(excess, target_center,
+    def find_valid_background(self,
+                              excess, 
+                              source_name,
+                              target_center,
                             target_radius=10*u.arcsec,
                             bck_radius=10*u.arcsec,
                             step_size=1*u.arcsec,
@@ -425,7 +489,6 @@ class BackgroundGenerator():
                             output=True,
                             verbose=True,
                             clobber=True,
-                            directory=Path("."),
                             outpath=Path(".")):
         """
         Determine a valid background circle location around a target source.
@@ -522,7 +585,7 @@ class BackgroundGenerator():
         if not "_" in suffix and suffix != "": suffix = f'_{suffix}'
         if not "_" in filter and filter != "": filter = f'_{filter}'
 
-        outfile = Path(outpath) / f"bck{suffix}{filter}.reg"
+        outfile = Path(outpath) / f"{source_name}_bkg.reg"
 
         # If a region file already exists and we're not overwriting (clobber),
         # just read the previously computed background center back out instead
@@ -630,7 +693,7 @@ class BackgroundGenerator():
         
         if circle:
             # --- Circular excess sources ---
-            circles = Make_Circle(excess["RA"],excess["DEC"],excess["R"],sky_frame="fk5",size_unit=u.deg)
+            circles = self.Make_Circle(excess["RA"],excess["DEC"],excess["R"],sky_frame="fk5",size_unit=u.deg)
             if verbose:
                 print(f"Checking {len(dist_arr)*len(angl_arr)} permutations against {n_excess} excess sources.")
             # Try every (distance, angle) candidate position, nearest first,
@@ -652,7 +715,7 @@ class BackgroundGenerator():
 
                     # Full test: does the candidate background circle overlap
                     # any detected excess circle?
-                    if circle_intersects_circle(candidate,bck_radius,ex_center,excess["R"]*u.degree).any():
+                    if self.circle_intersects_circle(candidate,bck_radius,ex_center,excess["R"]*u.degree).any():
                         intersects = True
 
                     if not intersects:
@@ -674,10 +737,10 @@ class BackgroundGenerator():
                         return (ra,dec)
                     if verbose:
                         # Print periodic progress through the (distance, angle) grid.
-                        index_to_percentage(j+i*len(angl_arr),len(dist_arr)*len(angl_arr),phrase="% Scanned")
+                        self.index_to_percentage(j+i*len(angl_arr),len(dist_arr)*len(angl_arr),phrase="% Scanned")
         else:
             # --- Elliptical excess sources ---
-            ellipses = Make_Ellipse(excess["RA"],excess["DEC"],SMaj=excess["SMaj"],SMin=excess["SMin"],Angl=excess["Angl"],sky_frame="fk5",size_unit=u.deg)
+            ellipses = self.Make_Ellipse(excess["RA"],excess["DEC"],SMaj=excess["SMaj"],SMin=excess["SMin"],Angl=excess["Angl"],sky_frame="fk5",size_unit=u.deg)
 
             if verbose:
                 print(f"Checking {len(dist_arr)*len(angl_arr)} permutations against {n_excess} excess sources.")
@@ -695,7 +758,7 @@ class BackgroundGenerator():
                     # Cheap pre-filter using each ellipse's minor-axis circle
                     # before doing the more expensive true ellipse containment
                     # check below.
-                    if circle_intersects_circle(candidate,bck_radius,ex_center,excess["SMin"]*u.degree).any():
+                    if self.circle_intersects_circle(candidate,bck_radius,ex_center,excess["SMin"]*u.degree).any():
                         intersects = True
 
                     # Full geometric test against every ellipse, stopping at
@@ -704,7 +767,7 @@ class BackgroundGenerator():
                         if intersects:
                             break
                 
-                        elif circle_intersects_ellipse(candidate,bck_radius,ellipse,n_samples=30,wcs=w):
+                        elif self.circle_intersects_ellipse(candidate,bck_radius,ellipse,n_samples=30,wcs=w):
                             intersects = True
                             break
                         else:
@@ -726,9 +789,245 @@ class BackgroundGenerator():
                         if verbose: print(f"Background found: ({round(ra,3)*u.deg},{round(dec,3)*u.deg})")
                         return (ra,dec)
                     if verbose:
-                        index_to_percentage(j+i*len(angl_arr),len(dist_arr)*len(angl_arr),phrase="% Scanned")
+                        self.index_to_percentage(j+i*len(angl_arr),len(dist_arr)*len(angl_arr),phrase="% Scanned")
         # Exhausted the full search grid without finding a non-intersecting
         # candidate location.
         if verbose:
             print("No valid sources found")
+        return None
+
+    def image_plotter(self, image_files,src_coord,bck_coords,exc_ls,save_image=False,save_name="UV_image.pdf",showplot=False,shape="circle",logscale=True):
+        """
+        Image plotting code for the background regions. Source regions are cyan, background 
+        regions are green, and excess regions are red.
+
+        Parameters
+        ----------
+        regfile : str
+            Path to DS9 region file.
+        image_files : str or list-like
+            Single or list of image file names
+        src_coord : list-like or SkyCoord
+            (ra,dec) of source coordinate
+        bck_coords : list-like 
+            Single or list of (ra,dec) (or SkyCoords) of background region(s). 
+            Must equal the name number of image files
+        exc_ls : list-like
+            List or lists of excess source structured arrays. Columns are labelled 
+            (RA,DEC,R) for circles or (RA,DEC,SMaj,SMin,Angl) for ellipses
+        save_image : bool
+            Option to save image. Default is False
+        save_name : str
+            Name for output plot. Default is "UV_image.pdf".
+        showplot : bool
+            Option to show plot via plt.show()
+        shape : str
+            Shape of excess regions ("circle" or "ellipse"). Default is "circle"
+        logscale : bool
+            Option to have output plot to have image log 
+            scaled or not. Default is True
+
+
+        Returns
+        -------
+        None
+
+        """
+
+        # Normalize inputs into arrays so single-image and multi-image calls
+        # can share the same code path.
+        image_files = np.atleast_1d(image_files)
+        n_images = len(image_files)
+        bck_coords = np.atleast_1d(bck_coords)
+        if len(exc_ls) != 1 and n_images == 1:
+            exc_ls = [exc_ls]
+        # exc_ls = np.atleast_1d(exc_ls)
+
+        if n_images != len(bck_coords) or n_images != len(exc_ls):
+            raise ValueError("There should be an equal number of image files to background region files")
+        
+        # Lay out a grid of subplots: single axis for one image, otherwise a
+        # 2-column grid with enough rows to fit all images.
+        if n_images == 1:
+            ncols = 1
+            mrows = 1
+        else:
+            ncols = 2
+            mrows = int(round(0.49+n_images/2,0))
+
+        fig, axes = plt.subplots(ncols=ncols,nrows=mrows,figsize=(6*ncols,6*mrows))
+
+
+        for i,image in enumerate(image_files):
+            
+            # Pick out the correct subplot axis for this image index.
+            if n_images == 1:
+                ax = axes
+            elif n_images < 3:
+                ax = axes[i]
+            else:
+                ax = axes[i%2,int(i/2)]
+            ax.set_title(Path(image).name)
+
+            data = fitsio.read(image)
+            with fits.open(image) as hdul:
+                w = WCS(hdul[1].header)
+
+            if logscale:
+                lindata = data
+                with np.errstate(divide='ignore'):
+                    data = np.log10(np.array(data))
+            else:
+                lindata = data
+
+            # Convert the source (target) sky coordinate to this image's pixel
+            # coordinates.
+            if isinstance(src_coord,SkyCoord):
+                x,y = w.world_to_pixel(src_coord)
+            else:
+                c0 = SkyCoord(src_coord[0],src_coord[1],unit=u.deg,frame="fk5")
+                x,y = w.world_to_pixel(c0)
+
+            # Convert this image's background coordinate to pixel coordinates.
+            if isinstance(bck_coords[i],SkyCoord):
+                xb,yb = w.world_to_pixel(bck_coords[i])
+            else:
+                b0 = SkyCoord(bck_coords[i,0],bck_coords[i,1],unit=u.deg,frame="fk5")
+                xb,yb = w.world_to_pixel(b0)
+
+            # Zoom the plot in around the target/background pair based on how
+            # far apart they are in pixels, so both circles stay visible.
+            dist = np.sqrt((x-xb)**2+(y-yb)**2)
+
+            if dist < 130:
+                ax.set_xlim([x-150,x+150])
+                ax.set_ylim([y-150,y+150])
+            elif dist < 290:
+                ax.set_xlim([x-300,x+300])
+                ax.set_ylim([y-300,y+300])
+
+
+            # Display the image with a gray colormap, clipped to +/- 2 sigma
+            # around the mean (ignoring -inf pixels from the log transform).
+            nonDATA = [d for d in np.array(data).flatten() if not np.isneginf(d)]
+            m, s = np.mean(nonDATA), np.std(nonDATA)
+            im = ax.imshow(data, interpolation='nearest', cmap='gray',vmin=m-2*s, vmax=m+2*s, origin='lower')
+
+            ax.axis('off')
+
+            # Draw the target source (cyan) and chosen background region
+            # (green) as circles on top of the image.
+            circ0 = Circle(xy=(x,y),radius=5)
+            circb = Circle(xy=(xb,yb),radius=8)
+
+            circ0.set_facecolor('none')
+            circ0.set_edgecolor('cyan')
+            circ0.set_lw(2)
+            ax.add_artist(circ0)
+
+
+            circb.set_facecolor('none')
+            circb.set_edgecolor('green')
+            circb.set_lw(2)
+            ax.add_artist(circb)
+
+            excess = exc_ls[i]
+
+            # Overlay every detected excess source (red) as either ellipses or
+            # circles, depending on `shape`.
+            if shape=="ellipse":
+                # Handle both plain-float (assumed degrees) and Quantity-typed
+                # excess arrays, converting sizes to arcsec and angle to
+                # radians for matplotlib's Ellipse patch.
+                if not isinstance(excess[0][0],u.Quantity):
+                    e0 = SkyCoord(excess["RA"],excess["DEC"],unit=u.deg,frame="fk5")
+                    x,y = w.world_to_pixel(e0)
+                    a = excess["SMaj"]*3600
+                    b = excess["SMin"]*3600
+                    theta = excess["Angl"]*np.pi/180
+                else:
+                    e0 = SkyCoord(excess["RA"],excess["DEC"],frame="fk5")
+                    x,y = w.world_to_pixel(e0)
+                    a = excess["SMaj"].to(u.arcsec).value
+                    b = excess["SMin"].to(u.arcsec).value
+                    theta = excess["Angl"].to(u.rad).value
+                dtype = np.dtype([
+                    ("x", "f8"),
+                    ("y", "f8"),
+                    ("a", "f8"),
+                    ("b", "f8"),
+                    ("theta", "f8")
+                ])
+
+                objects = np.zeros(len(x),dtype=dtype)
+
+                # Pack pixel positions and ellipse geometry into the structured
+                # array for convenient field access below.
+                for i in range(len(objects)):
+                    row = (x[i],y[i],a[i],b[i],theta[i])
+                    objects[i] = row
+
+                # Draw one red ellipse patch per detected excess source.
+                for i in range(len(objects)):
+                    
+                    e = Ellipse(xy=(objects['x'][i], objects['y'][i]),
+                                width=2*objects['a'][i],
+                                height=2*objects['b'][i],
+                                angle=objects['theta'][i] * 180. / np.pi)
+                    e.set_facecolor('none')
+                    e.set_edgecolor('red')
+                    e.set_lw(2)
+                    ax.add_artist(e)
+            else:
+                # Circle-shaped excess sources: 'R' column if present, else
+                # fall back to 'SMaj' (semi-major axis used as a radius).
+                if "R" in excess.names():
+                    if not isinstance(excess[0][0],u.Quantity):
+                        e0 = SkyCoord(excess["RA"],excess["DEC"],unit=u.deg,frame="fk5")
+                        x,y = w.world_to_pixel(e0)
+                        r = excess["R"]
+                    else:
+                        e0 = SkyCoord(excess["RA"],excess["DEC"],frame="fk5")
+                        x,y = w.world_to_pixel(e0)
+                        r = excess["R"].to(u.arcsec).value
+                else:
+                    if not isinstance(excess[0][0],u.Quantity):
+                        e0 = SkyCoord(excess["RA"],excess["DEC"],unit=u.deg,frame="fk5")
+                        x,y = w.world_to_pixel(e0)
+                        r = excess["SMaj"]*3600
+                    else:
+                        e0 = SkyCoord(excess["RA"],excess["DEC"],frame="fk5")
+                        x,y = w.world_to_pixel(e0)
+                        r = excess["SMaj"].to(u.arcsec).value
+                #     xb,yb = w.world_to_pixel(b0)
+                dtype = np.dtype([
+                    ("x", "f8"),
+                    ("y", "f8"),
+                    ("r", "f8")
+                ])
+
+                objects = np.zeros(len(x),dtype=dtype)
+                for i in range(len(objects)):
+                    row = (x[i],y[i],r[i])
+                    objects[i] = row
+
+
+                # Draw one red circle patch per detected excess source.
+                for i in range(len(objects)):
+                    e = Circle(xy=(objects['x'][i], objects['y'][i]),
+                                r=objects['r'][i])
+                    e.set_facecolor('none')
+                    e.set_edgecolor('red')
+                    e.set_lw(2)
+                    ax.add_artist(e)
+
+        # Save the composite figure (all image panels) to disk, and optionally
+        # display it interactively as well.
+        if save_image:
+            fig.savefig(save_name,bbox_inches="tight")
+        if showplot:
+            plt.show()
+
+        plt.close()
+
         return None
