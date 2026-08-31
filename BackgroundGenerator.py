@@ -49,16 +49,16 @@ class BackgroundGenerator():
                                                          plotsrc=self.plotsrc
                                                          )
 
-        coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=30*u.arcsec,max_iter=1e2,verbose=self.verbose,clobber=self.clobber)
+        coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=30*u.arcsec,max_iter=1e2,verbose=self.verbose,clobber=self.clobber)
         
         if coord is None:
-            coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=50*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+            coord = self.find_valid_background(self.excess,self.source_name, self.c0,bck_radius=8*u.arcsec,dist_limit=50*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
             if coord is None:
-                coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=100*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+                coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=100*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
                 if coord is None:
-                    coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=150*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+                    coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=150*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
                     if coord is None:
-                        coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=200*u.arcsec,max_iter=1e3,verbose=self.verbose,clobber=self.clobber)
+                        coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=200*u.arcsec,max_iter=1e3,verbose=self.verbose,clobber=self.clobber)
                         print(f"Failed to find valid background region for {src}")
                     else:
                         print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
