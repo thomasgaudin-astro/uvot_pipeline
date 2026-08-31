@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import fitsio
 import sep
 
@@ -19,12 +21,13 @@ from regions import EllipseSkyRegion, CircleSkyRegion
 
 
 class BackgroundGenerator():
-    def __init__(self, tile_name, obsid, source_ra, source_dec, verbose=False, threshold=1, output=True, shape="circle", logscale=True, plotsrc=False):
+    def __init__(self, tile_name, obsid, source_ra, source_dec, verbose=False, clobber=True, threshold=1, output=True, shape="circle", logscale=True, plotsrc=False):
         self.tile_name = tile_name
         self.obsid = obsid
         self.source_ra = source_ra
         self.source_dec = source_dec
         self.verbose = verbose
+        self.clobber = clobber
         self.threshold = threshold
         self.output = output
         self.shape = shape
@@ -55,6 +58,14 @@ class BackgroundGenerator():
                     if coord is None:
                         coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=200*u.arcsec,max_iter=1e3,verbose=self.verbose,clobber=self.clobber)
                         print(f"Failed to find valid background region for {src}")
+                    else:
+                        print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+                else:
+                    print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+            else:
+                print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+        else:
+            print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
 
     def index_to_percentage(self, i, n, steps=10, phrase="% Complete"):
         """
