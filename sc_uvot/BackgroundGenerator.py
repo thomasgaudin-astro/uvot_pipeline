@@ -19,9 +19,11 @@ from regions import EllipseSkyRegion, CircleSkyRegion
 
 
 class BackgroundGenerator():
-    def __init__(self, tile_name, obsid, verbose=False, threshold=1, output=True, shape="circle", logscale=True, plotsrc=False):
+    def __init__(self, tile_name, obsid, source_ra, source_dec, verbose=False, threshold=1, output=True, shape="circle", logscale=True, plotsrc=False):
         self.tile_name = tile_name
         self.obsid = obsid
+        self.source_ra = source_ra
+        self.source_dec = source_dec
         self.verbose = verbose
         self.threshold = threshold
         self.output = output
@@ -31,6 +33,8 @@ class BackgroundGenerator():
 
         self.filepath = f'./S-CUBED/{self.tile_name}/UVOT/{self.obsid}/uvot/image/sw{self.obsid}uw1_sk.img.gz'
 
+        self.c0 = SkyCoord(self.source_ra, self.source_dec, unit=u.deg, frame="fk5")
+
         self.excess, self.excess_pxl = self.find_sources(self.filepath, 
                                                          threshold=self.threshold, 
                                                          verbose=self.verbose, 
@@ -39,6 +43,18 @@ class BackgroundGenerator():
                                                          logscale=self.logscale, 
                                                          plotsrc=self.plotsrc
                                                          )
+
+        coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=30*u.arcsec,max_iter=1e2,suffix=self.s0,verbose=self.verbose,clobber=self.clobber)
+        
+        if coord is None:
+            coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=50*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+            if coord is None:
+                coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=100*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+                if coord is None:
+                    coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=150*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
+                    if coord is None:
+                        coord = self.find_valid_background(self.excess,self.c0,bck_radius=8*u.arcsec,dist_limit=200*u.arcsec,max_iter=1e3,verbose=self.verbose,clobber=self.clobber)
+                        print(f"Failed to find valid background region for {src}")
 
     def index_to_percentage(self, i, n, steps=10, phrase="% Complete"):
         """
