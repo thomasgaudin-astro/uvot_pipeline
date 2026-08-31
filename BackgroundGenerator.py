@@ -49,7 +49,7 @@ class BackgroundGenerator():
                                                          plotsrc=self.plotsrc
                                                          )
 
-        coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=30*u.arcsec,max_iter=1e2,suffix=self.s0,verbose=self.verbose,clobber=self.clobber)
+        coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=30*u.arcsec,max_iter=1e2,verbose=self.verbose,clobber=self.clobber)
         
         if coord is None:
             coord = self.find_valid_background(self.excess,self.c0,self.source_name, bck_radius=8*u.arcsec,dist_limit=50*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
