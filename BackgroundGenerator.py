@@ -59,15 +59,15 @@ class BackgroundGenerator():
                     coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=150*u.arcsec,max_iter=3e2,verbose=self.verbose,clobber=self.clobber)
                     if coord is None:
                         coord = self.find_valid_background(self.excess,self.source_name, self.c0, bck_radius=8*u.arcsec,dist_limit=200*u.arcsec,max_iter=1e3,verbose=self.verbose,clobber=self.clobber)
-                        print(f"Failed to find valid background region for {src}")
+                        print(f"Failed to find valid background region for {self.source_name}")
                     else:
-                        print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+                        print(f"Background region for {self.source_name} found at: {coord[0]} {coord[1]}")
                 else:
-                    print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+                    print(f"Background region for {self.source_name} found at: {coord[0]} {coord[1]}")
             else:
-                print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+                print(f"Background region for {self.source_name} found at: {coord[0]} {coord[1]}")
         else:
-            print(f"Background region for {src} found at: {coord[0]} {coord[1]}")
+            print(f"Background region for {self.source_name} found at: {coord[0]} {coord[1]}")
 
     def index_to_percentage(self, i, n, steps=10, phrase="% Complete"):
         """
