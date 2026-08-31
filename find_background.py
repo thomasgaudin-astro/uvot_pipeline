@@ -3,7 +3,7 @@
 
 import argparse
 
-from .BackgroundGenerator import BackgroundGenerator
+from BackgroundGenerator import BackgroundGenerator
 
 def main():
 
