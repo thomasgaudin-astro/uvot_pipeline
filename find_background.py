@@ -14,7 +14,7 @@ def main():
                         help="The S-CUBED Tile containing the source that needs a background region"
     )
     parser.add_argument('obsid',
-                        type=int,
+                        type=str,
                         help="The reference observation ID to use for detecting sources that need to be avoided."
     )
     parser.add_argument('source_name',
