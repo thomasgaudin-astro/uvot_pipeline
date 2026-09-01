@@ -30,10 +30,12 @@ def main():
                         help="The Declination of the target source in decimal degrees."
     )
     parser.add_argument('-v', '--verbose',
+                        default=False,
                         action='store_true',
                         help="Prints out additional information about the background region search."
     )
     parser.add_argument('-c', '--clobber',
+                        default=True,
                         action='store_true',
                         help="Overwrites any existing background region files."
     )
@@ -43,6 +45,7 @@ def main():
                         help="The sigma threshold for source detection in the background region search."
     )
     parser.add_argument('-o', '--output',
+                        default=True,
                         action='store_true',
                         help="Saves the excess source regions to a file."
     )
@@ -52,10 +55,12 @@ def main():
                         help="The shape of the source detection region. Options are 'circle' or 'ellipse'."
     )
     parser.add_argument('-l', '--logscale',
+                        default=True,
                         action='store_true',
                         help="Uses a logarithmic scale for the source detection image."
     )
     parser.add_argument('-p', '--plotsrc',
+                        default=False,
                         action='store_true',
                         help="Plots the source detection image with the detected sources overlaid."
     )
