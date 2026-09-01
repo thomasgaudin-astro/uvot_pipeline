@@ -2,6 +2,7 @@
 import os
 import re
 import shutil
+from turtle import up
 import tqdm
 
 from astropy.coordinates import SkyCoord
@@ -10,6 +11,7 @@ from astropy.table import QTable
 import astropy.units as u
 
 from .FTOOLSCommands import create_fkeyprint_bash_command, run_fkeyprint, run_fkeyprint_verbose
+from .FTOOLSCommands import create_uvotunicorr_bash_command, run_uvotunicorr, run_uvotunicorr_verbose
 
 class AspectCorrections():
     def __init__(self, tile_name, verbose=False, remove_bad=False, num_stars=200,  side_buffer=10):
@@ -89,7 +91,46 @@ class AspectCorrections():
                 #find brightest stars in the center of the reference frame
                 self.ref_bright_stars = self.find_brightest_central_stars(self.ref_detect_path, num_stars=self.num_stars, side_buffer=self.side_buffer)
 
-                
+                #run the corrections
+                for obs_frame in self.aspect_uncorrected:
+                    print(f"Correcting ObsID {obs_frame}.")
+
+                    #generate general directory path to obs frame folder
+                    obs_directory = f'{filepath}/{obs_frame}/uvot/image'
+                    #generate path to detect.fits for observation frame
+                    obs_detect_path = f'{filepath}/{obs_frame}/uvot/image/detect.fits'
+
+                    #check to see if any stars are found
+                    stars = QTable.read(obs_detect_path).to_pandas()
+                    num_detected_stars = len(stars.index)
+
+                    #only perform aperture correction if stars are detected
+                    if num_detected_stars > 0:
+                    
+                        #find brightest stars in the center of the observation frame
+                        obs_bright_stars = self.find_brightest_central_stars(obs_detect_path, num_stars=num_stars, side_buffer=side_buffer)
+                        
+                        #remove stars that do not match between frames
+                        new_ref_bright_stars, obs_bright_stars = self.remove_separate_stars(self.ref_bright_stars, obs_bright_stars)
+                        
+                        #create ds9 .reg files for reference and observation images
+                        self.create_ref_obs_reg_files(new_ref_bright_stars, obs_bright_stars, outpath=obs_directory)
+                        
+                        #copy reference image to uncorrected observation folder
+                        shutil.copy(self.ref_file_path, obs_directory)
+                        
+                        
+                        #create the command to run uvotunicorr
+                        unicorr_command = create_uvotunicorr_bash_command(self.ref_frame, obs_frame, obspath=obs_directory)
+                        
+                        #run uvotunicorr
+                        if self.verbose:
+                            run_uvotunicorr_verbose(unicorr_command)
+                        else:
+                            run_uvotunicorr(unicorr_command)
+
+                    else:
+                        continue
 
 
 
