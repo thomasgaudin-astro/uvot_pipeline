@@ -40,7 +40,7 @@ class BackgroundGenerator():
         self.c0 = SkyCoord(self.source_ra, self.source_dec, unit=u.deg, frame="fk5")
 
         self.excess, self.excess_pxl = self.find_sources(self.filepath, 
-                                                         outreg=f'./S-CUBED/{self.tile_name}/UVOT/{self.obsid}/{self.source_name}_excess.reg', 
+                                                         outreg=f'./S-CUBED/{self.tile_name}/UVOT/{self.obsid}/uvot/image/{self.source_name}_excess.reg', 
                                                          threshold=self.threshold, 
                                                          verbose=self.verbose, 
                                                          output=self.output, 
