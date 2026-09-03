@@ -28,6 +28,8 @@ from astropy.units import UnitsWarning
 
 from tqdm import tqdm
 
+from sc_uvot import WhichTile
+
 # Set all required environment variables
 os.environ['HEADAS'] = '/bulk/pkg/heasoft-6.35.1/aarch64-apple-darwin23.6.0'
 os.environ['PFILES'] = f"/tmp/pfiles;{os.environ['HEADAS']}/syspfiles"
@@ -73,64 +75,12 @@ while files_exist == False:
     
 print("Checking which S-CUBED Tile is closest to your photometry target.")
 
-# Create SkyCoord object from input RA and DEC.
-source_coords = SkyCoord(args.source_ra, args.source_dec, frame='icrs', unit=u.deg)
+wt = WhichTile(args.source_ra, args.source_dec)
 
-# Start code to check closest tile to the source position.
-# Loop through tiles to calcualte separation for each tile center to source RA and DEC. 
-for ind in tiles.index:
-    tiles.loc[ind, 'Tile Name'] = tiles.loc[ind, 'Tile Name'].rstrip()
-    
-    # Create SkyCoord object for tile central RA and DEC
-    tile_ra = tiles.loc[ind, 'RA']
-    tile_dec = tiles.loc[ind, 'DEC']
-    tile_coords = SkyCoord(tile_ra, tile_dec, frame='icrs', unit=u.deg)
+closest_tile = wt.closest_tile
+min_dist = wt.min_dist
 
-    # Calc separation and append to tiles DataFrame
-    sep = source_coords.separation(tile_coords).deg
-    tiles.loc[ind, 'Sep'] = sep
-
-# Sort tiles by distance so that cleses target is on top.
-minimized_tiles = tiles.sort_values('Sep', ascending=True).reset_index(drop=True)
-min_dist = minimized_tiles.loc[0, 'Sep']
-closest_tile = minimized_tiles.loc[0, 'Tile Name']
-
-print(f'The Closest Tile is: {closest_tile}')
-print(f'Distance to Closest Tile is: {min_dist} deg')
-
-use_tile = False
-valid_tile = False
-
-# Check to see if this tile is 
-# while use_tile == False:
-
-#     uf = input(f'Do you wish to use {closest_tile}? [Y]')
-
-#     if uf == "":
-#         print(f"Using {closest_tile}")
-#         use_tile = True
-#     elif uf.upper == "Y":
-#         use_tile = True
-#     elif uf.upper == "N":
-#         closest_tile = input(f'Which tile do you wish to use instead? ')
-        
-#         # Check to make sure new tile is real.
-#         while valid_tile == False:
-#             filepath = f'./S-CUBED'
-        
-#             all_filepaths = sorted(os.listdir(filepath))
-#             if '.DS_Store' in all_filepaths:
-#                 all_filepaths.remove('.DS_Store')
-
-#             if closest_tile in all_filepaths:
-#                 print(f"Using {closest_tile}")
-#                 valid_tile = True
-#             else:
-#                 print("Tile not found. Please input a valid title.")
-            
-#         use_tile = True
-#     else:
-#         print("Please pick a valid option [Y/N]")
+print(f'\nUsing {closest_tile} for photometry.')
 
 print("\nStarting aperture photometry.")
 
