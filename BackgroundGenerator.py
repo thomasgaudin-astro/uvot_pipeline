@@ -693,8 +693,10 @@ class BackgroundGenerator():
         # these position angles double as the candidate search directions
         # (testing behind/around known sources rather than every direction).
         ex_center = SkyCoord(excess["RA"],excess["DEC"],unit=u.deg,frame="fk5")
+        # Must be in units of arcsecs, but is unitless
         sep_arr = c0.separation(ex_center).to(u.arcsec)
-        angl_arr = c0.position_angle(ex_center).degree
+        # Must be an astropy angular quantity, preferably degrees
+        angl_arr = (c0.position_angle(ex_center).degree)*u.deg
         n_excess = len(sep_arr)
         if max_iter is None or max_iter > n_excess: max_iter = n_excess
 
@@ -705,7 +707,7 @@ class BackgroundGenerator():
         if n_excess < 5:
             angl_arr = np.linspace(0,360,20)*u.deg
         if n_excess < 3:
-            sep_arr = np.linspace((target_radius+bck_radius).to(u.arcsec),dist_limit/2,len(sep_arr))*u.arcsec
+            sep_arr = np.linspace((target_radius+bck_radius).to(u.arcsec),dist_limit/2,len(sep_arr))
 
         # Cap the number of angles tested to max_iter.
         angl_arr = angl_arr[:int(max_iter)]
