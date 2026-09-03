@@ -23,6 +23,8 @@ class AspectCorrections():
 
         self.filepath = f'./S-CUBED/{tile_name}/UVOT' 
 
+        print("Identifying Frames with No Aspect Correction.")
+
         # check the aspect correction status of all the observations in the tile 
         # return a list of uncorrected observations and a list of direct corrected observations
         # return the number of uncorrected observations
@@ -96,9 +98,9 @@ class AspectCorrections():
                     print(f"Correcting ObsID {obs_frame}.")
 
                     #generate general directory path to obs frame folder
-                    obs_directory = f'{filepath}/{obs_frame}/uvot/image'
+                    obs_directory = f'{self.filepath}/{obs_frame}/uvot/image'
                     #generate path to detect.fits for observation frame
-                    obs_detect_path = f'{filepath}/{obs_frame}/uvot/image/detect.fits'
+                    obs_detect_path = f'{self.filepath}/{obs_frame}/uvot/image/detect.fits'
 
                     #check to see if any stars are found
                     stars = QTable.read(obs_detect_path).to_pandas()
@@ -132,7 +134,25 @@ class AspectCorrections():
                     else:
                         continue
 
-
+                print("Corrections Complete. Checking how many were successful.\n")
+                            
+                #check again for bad frames. Count how many are left to correct
+                self.new_aspect_uncorrected_frames = self.check_aspect_correction(self.filepath)
+                self.new_num_uncorrected = len(self.new_aspect_uncorrected_frames)
+                
+                self.num_successful = self.num_uncorrected - self.new_num_uncorrected
+                
+                print(f"{self.num_successful} Frames were successfully corrected for tile {self.tile_name}.\n")
+                
+                # If there are no frames left to correct, no more work is needed.
+                if self.new_num_uncorrected == 0:
+                    print("Aspect Corrections Complete. ")
+                    self.frames_to_correct = False
+                
+                #If there are frames to correct, set flag to True
+                else:
+                    print(f"{self.new_num_uncorrected} still need to be corrected.")
+                    self.frames_to_correct = True
 
 
 
