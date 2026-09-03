@@ -5,6 +5,8 @@ import shutil
 from turtle import up
 import tqdm
 
+import pandas as pd
+
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.table import QTable
@@ -87,9 +89,9 @@ class AspectCorrections():
 
                 print(f'The Reference Frame is {self.ref_frame}')
                 #generate path to the reference frame detect.fits
-                self.ref_detect_path = f'{filepath}/{self.ref_frame}/uvot/image/detect.fits'
+                self.ref_detect_path = f'{self.filepath}/{self.ref_frame}/uvot/image/detect.fits'
                 #generate path to reference image
-                self.ref_file_path = f'{filepath}/{self.ref_frame}/uvot/image/sw{self.ref_frame}uw1_sk.img'
+                self.ref_file_path = f'{self.filepath}/{self.ref_frame}/uvot/image/sw{self.ref_frame}uw1_sk.img'
                 #find brightest stars in the center of the reference frame
                 self.ref_bright_stars = self.find_brightest_central_stars(self.ref_detect_path, num_stars=self.num_stars, side_buffer=self.side_buffer)
 
