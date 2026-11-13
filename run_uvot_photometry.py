@@ -268,7 +268,6 @@ cc = Clock()
 
 cc.met = list(source_data['MET'])
 cc.submit()
-print(cc.met)
 
 times = Time(cc.utc, scale='utc').mjd
 
@@ -302,7 +301,7 @@ analysis_frame.loc[0, 'Final'] = final
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX_AA_COI_LIM', 'OBSID']].copy()
 
 #write out analysis frame to text file
-analysis_frame.to_csv(f'./UVOT_Source_Analysis/Photometry/{args.source_name}_uvot_analysis.txt', index=False)
+analysis_frame.to_csv(f'./UVOT_Source_Analysis/Photometry/{args.source_name}_uvot_analysis.txt', index=False, sep='\t')
 
 outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
