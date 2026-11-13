@@ -132,6 +132,8 @@ valid_tile = False
 #     else:
 #         print("Please pick a valid option [Y/N]")
 
+analysis_frame = pd.DataFrame(columns=['Initial', 'Off Frame', 'Small-Scale Sensitivity', 'Sigma Clipped', 'Final'])
+
 print("\nStarting aperture photometry.")
 
 # Define filepath for individual UVOT observations
@@ -142,6 +144,9 @@ all_target_filepaths = sorted(os.listdir(tile_filepath))
     
 if '.DS_Store' in all_target_filepaths:
     all_target_filepaths.remove('.DS_Store')
+
+initial_obs_count = len(all_target_filepaths)
+analysis_frame.loc[0, 'Initial'] = initial_obs_count
 
 print('\nRe-running uvotdetect on all tiles')
 # Gotta re-run uvotdetect to account for any changes from aspect correction
@@ -268,8 +273,16 @@ times = Time(cc.utc, scale='utc').mjd
 
 source_data['MJD'] = times
 
+n_success = len(source_data)
+off_frame = initial_obs_count - n_success
+analysis_frame.loc[0, 'Off Frame'] = off_frame
+
 #remove any sources with magnitude of 99
 source_data = source_data[source_data['MAG'] < 99]
+sss_data = source_data[source_data['MAG'] > 99]
+
+small_scale_sensitivity = len(sss_data)
+analysis_frame.loc[0, 'Small-Scale Sensitivity'] = small_scale_sensitivity
 
 #take mean and standard deviation of magnitude
 source_mean_mag = np.mean(source_data['MAG'])
@@ -277,9 +290,18 @@ source_std_dev_mag = np.std(source_data['MAG'])
 
 #clip any values that are not within 5 sigma of the mean
 source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
+sigma_clipped = source_data[(source_data['MAG'] >= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] <= source_mean_mag - (5*source_std_dev_mag))]
+sigma_clipped_count = len(sigma_clipped)
+analysis_frame.loc[0, 'Sigma Clipped'] = sigma_clipped_count
+
+final = len(source_data)
+analysis_frame.loc[0, 'Final'] = final
 
 #copy just the values that we want to a sliced DataFrame
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX_AA_COI_LIM', 'OBSID']].copy()
+
+#write out analysis frame to text file
+analysis_frame.to_csv(f'./UVOT_Source_Analysis/Photometry/{args.source_name}_uvot_analysis.txt', index=False)
 
 outpath = f'./UVOT_Outputs/{args.source_name}_uvot_data.txt'
 
