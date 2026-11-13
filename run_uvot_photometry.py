@@ -268,6 +268,7 @@ cc = Clock()
 
 cc.met = list(source_data['MET'])
 cc.submit()
+print(cc.met)
 
 times = Time(cc.utc, scale='utc').mjd
 
