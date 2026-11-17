@@ -280,7 +280,7 @@ analysis_frame.loc[0, 'Off Frame'] = off_frame
 
 #remove any sources with magnitude of 99
 source_data = source_data[source_data['MAG'] < 99]
-sss_data = source_data[source_data['MAG'] > 99]
+sss_data = source_data[source_data['MAG'] >= 99]
 
 small_scale_sensitivity = len(sss_data)
 analysis_frame.loc[0, 'Small-Scale Sensitivity'] = small_scale_sensitivity
@@ -290,8 +290,8 @@ source_mean_mag = np.mean(source_data['MAG'])
 source_std_dev_mag = np.std(source_data['MAG'])
 
 #clip any values that are not within 5 sigma of the mean
-source_data = source_data[(source_data['MAG'] <= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] >= source_mean_mag - (5*source_std_dev_mag))]
-sigma_clipped = source_data[(source_data['MAG'] >= source_mean_mag + (5*source_std_dev_mag)) & (source_data['MAG'] <= source_mean_mag - (5*source_std_dev_mag))]
+source_data = source_data[(source_data['MAG'] <= (source_mean_mag + (5*source_std_dev_mag))) & (source_data['MAG'] >= (source_mean_mag - (5*source_std_dev_mag)))]
+sigma_clipped = source_data[(source_data['MAG'] >= (source_mean_mag + (5*source_std_dev_mag))) & (source_data['MAG'] <= (source_mean_mag - (5*source_std_dev_mag)))]
 sigma_clipped_count = len(sigma_clipped)
 analysis_frame.loc[0, 'Sigma Clipped'] = sigma_clipped_count
 
