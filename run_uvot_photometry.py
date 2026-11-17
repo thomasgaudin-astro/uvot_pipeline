@@ -278,8 +278,14 @@ n_success = len(source_data)
 off_frame = initial_obs_count - n_success
 analysis_frame.loc[0, 'Off Frame'] = off_frame
 
+print(f"Initial Frames: {initial_obs_count}")
+print(f"Observations Off Frame: {off_frame}")
+print(f"Observations On Frame: {n_success}")
+
 #remove any sources with magnitude of 99
 source_data = source_data[source_data['MAG'] < 99]
+print(f"Removed {n_success - len(source_data)} observations with magnitude of 99.")
+print(f"Length of source_data is now: {len(source_data)}.")
 
 small_scale_sensitivity = n_success - len(source_data)
 analysis_frame.loc[0, 'Small-Scale Sensitivity'] = small_scale_sensitivity
@@ -291,10 +297,12 @@ source_std_dev_mag = np.std(source_data['MAG'])
 #clip any values that are not within 5 sigma of the mean
 source_data = source_data[(source_data['MAG'] <= (source_mean_mag + (5*source_std_dev_mag))) & (source_data['MAG'] >= (source_mean_mag - (5*source_std_dev_mag)))]
 sigma_clipped_count = n_success - small_scale_sensitivity -  len(source_data)
+print(f"Sigma clipped observations: {sigma_clipped_count}")
 analysis_frame.loc[0, 'Sigma Clipped'] = sigma_clipped_count
 
 final = len(source_data)
 analysis_frame.loc[0, 'Final'] = final
+print(f"Final number of observations: {final}")
 
 #copy just the values that we want to a sliced DataFrame
 uvot_data_slice = source_data[['MJD', 'MAG', 'MAG_ERR', 'FLUX_AA', 'FLUX_AA_ERR', 'FLUX_AA_COI_LIM', 'OBSID']].copy()
